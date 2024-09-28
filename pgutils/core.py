@@ -2,11 +2,10 @@ from contextlib import contextmanager, asynccontextmanager
 from typing import Union, List, Any
 import logging
 import asyncio
-from asyncio import iscoroutinefunction
 import re
 
 
-from pydantic import BaseModel, HttpUrl, Field, ValidationError, field_validator, Field, constr
+from pydantic import BaseModel, HttpUrl, ValidationError, field_validator, Field
 from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
@@ -36,11 +35,6 @@ class DatabaseConfig(BaseModel):
         # Validate the admin URI using shared validation logic
         validate_postgresql_uri(admin_uri, allow_async=False)
         return admin_uri
-
-    @field_validator('uri')
-    def validate_uri(cls, value):
-        """Validates the URI format to assert PostgreSQL with psycopg or asyncpg."""
-        return validate_postgresql_uri(value, allow_async=True)
 
     @field_validator('uri')
     def validate_uri(cls, value):
@@ -83,15 +77,6 @@ class Database:
             if self.async_mode
             else sessionmaker(bind=self.engine)
         )
-
-    @contextmanager
-    def get_session(self):
-        """Context manager for a database session."""
-        session = self.session_maker()
-        try:
-            yield session
-        finally:
-            session.close()
 
     async def _get_async_session(self):
         """Async method to get a database session."""
