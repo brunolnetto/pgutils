@@ -64,7 +64,7 @@ test: ## run tests quickly with the default Python
 
 watch: ## run tests on watchdog mode
 	poetry shell
-	ptw .
+	ptw --clear .
 
 lint: clean ## perform inplace lint fixes
 	ruff check --fix .
