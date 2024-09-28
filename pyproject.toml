@@ -5,9 +5,18 @@ description = "A library to help managing multiple database connections using SQ
 authors = ["Bruno Peixoto <brunolnetto@gmail.com>"]
 license = "MIT"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"
+
 [tool.poetry.dependencies]
 python = "^3.10"
 pydantic = "^2.9.2"
+pytest-asyncio = "^0.24.0"
+pytest-watch = "^4.2.0"
+psycopg-binary = "^3.2.2"
+psycopg2-binary = "^2.9.9"
+psycopg = "^3.2.2"
 
 [tool.poetry.dev-dependencies]
 
