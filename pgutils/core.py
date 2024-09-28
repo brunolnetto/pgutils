@@ -5,11 +5,12 @@ import asyncio
 import re
 
 
-from pydantic import BaseModel, HttpUrl, ValidationError, field_validator, Field
-from sqlalchemy import create_engine, text
+from pydantic import BaseModel, AnyUrl, ValidationError, field_validator, Field
+from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy.engine.url import make_url
+from sqlalchemy.exc import ProgrammingError
 
 from .utils import validate_postgresql_uri
 
@@ -17,34 +18,43 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_POOL_SIZE = 20
 DEFAULT_MAX_OVERFLOW = 10
-
+NOT_EMPTY_STR_COUNT = 1
+DEFAULT_MINIMUM_PASSWORD_SIZE = 1
 
 class DatabaseConfig(BaseModel):
-    uri: HttpUrl  # Database URI for regular operations
-    admin_username: str = Field(min_length=1)  # Admin username must not be empty
-    admin_password: str = Field(min_length=8)  # Admin password must be at least 8 characters
+    uri: AnyUrl  # Database URI for regular operations
+    admin_username: str = Field(min_length=NOT_EMPTY_STR_COUNT) 
+    admin_password: str = Field(min_length=DEFAULT_MINIMUM_PASSWORD_SIZE)
     async_mode: bool = False
     pool_size: int = Field(default=DEFAULT_POOL_SIZE, gt=0)  # Must be greater than 0
     max_overflow: int = Field(default=DEFAULT_MAX_OVERFLOW, ge=0)  # Must be 0 or greater
-    db_name: str = Field(min_length=1)  # Database name must not be empty
 
     @property
-    def admin_uri(self) -> str:
-        """Constructs the admin URI using the username and password."""
-        admin_uri = f"postgresql://{self.admin_username}:{self.admin_password}@{self.uri.host}:{self.uri.port}/{self.db_name}"
+    def db_name(self) -> str:
+        """Extracts the database name from the URI."""
+        return self.uri.path.lstrip('/') if self.uri.path else None
+
+    @property
+    def admin_uri(self) -> AnyUrl:
+        """Constructs the admin URI using the username and password, falling back to defaults if missing."""
+        username = self.admin_username
+        password = self.admin_password
+        
+        admin_uri = f"postgresql://{username}:{password}@{self.uri.host}:{self.uri.port}"
         # Validate the admin URI using shared validation logic
         validate_postgresql_uri(admin_uri, allow_async=False)
-        return admin_uri
+        return make_url(admin_uri)
 
     @field_validator('uri')
-    def validate_uri(cls, value):
+    def validate_uri(cls, value: AnyUrl):
         """Validates the URI format to assert PostgreSQL with psycopg or asyncpg."""
-        if not value.startswith(("postgresql+psycopg://", "postgresql+asyncpg://")):
-            raise ValueError("URI must start with 'postgresql+psycopg://' or 'postgresql+asyncpg://'.")
-        
+        # Check the scheme directly
+        if value.scheme not in ("postgresql", "postgresql+psycopg", "postgresql+asyncpg"):
+            raise ValueError("URI must start with 'postgresql', 'postgresql+psycopg', or 'postgresql+asyncpg'.")
+
         # Optionally, you can also check the full URI structure here.
-        regex = re.compile(r"^postgresql\+.*://[a-zA-Z0-9._%+-]+:[^@]+@[^:/]+:\d+/.+$")
-        if not regex.match(value):
+        regex = re.compile(r"^postgresql(\+.*)?://[a-zA-Z0-9._%+-]+:[^@]+@[^:/]+:\d+/.+$")
+        if not regex.match(str(value)):
             raise ValueError("Invalid PostgreSQL URI format.")
         
         return value
@@ -63,20 +73,67 @@ class Database:
     """
 
     def __init__(self, config: DatabaseConfig):
-        self.url = make_url(config.uri)
+        self.uri = make_url(str(config.uri))
+        self.admin_uri = config.admin_uri
         self.base = declarative_base()
         self.async_mode = config.async_mode
 
         self.engine = (
-            create_async_engine(config.uri, pool_size=config.pool_size, max_overflow=config.max_overflow)
+            create_async_engine(str(config.uri), pool_size=config.pool_size, max_overflow=config.max_overflow)
             if self.async_mode
-            else create_engine(config.uri, pool_size=config.pool_size, max_overflow=config.max_overflow)
+            else create_engine(str(config.uri), pool_size=config.pool_size, max_overflow=config.max_overflow)
         )
         self.session_maker = (
             sessionmaker(bind=self.engine, class_=AsyncSession, expire_on_commit=False)
             if self.async_mode
             else sessionmaker(bind=self.engine)
         )
+
+        # Create the database if a name is provided and it doesn't exist
+        if config.db_name:  
+            self.__create_database_if_not_exists(config.db_name)
+
+    def __create_database_if_not_exists(self, db_name: str):
+        """Creates the database if it does not exist."""
+        # Create a temporary engine for the default database
+        temp_engine = create_engine(str(self.admin_uri), isolation_level="AUTOCOMMIT")
+
+        # Use the temporary engine to create the specified database if it doesn't exist
+        with temp_engine.connect() as connection:
+            try:
+                # Attempt to create the database
+                connection.execute(text(f"CREATE DATABASE \"{db_name}\""))
+            except ProgrammingError as e:
+                # Check if the error indicates the database already exists
+                if 'already exists' not in str(e):
+                    raise  # Reraise if it's a different error
+    
+    def drop_database_if_exists(self, db_name: str):
+        """Drops the database if it exists."""
+        # Create a temporary engine for the admin connection
+        temp_uri=str(self.admin_uri)
+        temp_engine = create_engine(temp_uri, isolation_level="AUTOCOMMIT")
+
+        # First, terminate all active connections to the database
+        with temp_engine.connect() as connection:
+            try:
+                # Terminate active connections
+                connection.execute(text(f"""
+                    SELECT pg_terminate_backend(pg_stat_activity.pid)
+                    FROM pg_stat_activity
+                    WHERE pg_stat_activity.datname = '{db_name}'
+                    AND pid <> pg_backend_pid();
+                """))
+            except Exception as e:
+                logger.error(f"Error while terminating connections: {e}")
+
+        # Now, proceed to drop the database
+        with temp_engine.connect() as connection:
+            try:
+                # Attempt to drop the database
+                connection.execute(text(f"DROP DATABASE IF EXISTS \"{db_name}\""))
+            except ProgrammingError as e:
+                logger.error(f"Error while dropping the database: {e}")
 
     async def _get_async_session(self):
         """Async method to get a database session."""
@@ -106,35 +163,65 @@ class Database:
 
     def mask_sensitive_data(self) -> str:
         """Masks sensitive data (e.g., password) in the database URI."""
-        masked_url = self.url.set(password="******")
-        if self.url.username:
+        masked_url = self.uri.set(password="******")
+        if self.uri.username:
             masked_url = masked_url.set(username="******")
         return str(masked_url)
 
-    def _execute_health_check(self):
+    def _health_check_sync(self):
         """Execute health check logic."""
-        with self.engine.begin() as conn:
-            conn.execute(text("SELECT 1"))
-        return True
+        try:
+            with self.engine.connect() as connection:
+                print(self.uri.password)
+                # Execute a simple query to test the connection
+                connection.execute(text("SELECT 1"))
+                return True
+        except ProgrammingError as e:
+            logger.error(f"Health check failed: {e}")
+            return False
+        except Exception:
+            return False
 
-    async def _async_execute_health_check(self):
-        """Asynchronously execute health check logic."""
-        async with self.engine.begin() as conn:
-            await conn.execute(text("SELECT 1"))
-        return True
+    async def _health_check_async(self):
+        """Checks if the database connection is alive."""
+        try:
+            async with self.engine.connect() as connection:
+                # Execute a simple query to test the connection
+                await connection.execute(text("SELECT 1"))
+                return True
+        except ProgrammingError as e:
+            logger.error(f"Health check failed: {e}")
+            return False
+        except Exception:
+            return False
 
-    def health_check(self, async_mode: bool = None) -> bool:
+    def health_check(self, use_admin_uri: bool = False) -> bool:
         """Checks database connection, synchronous or asynchronously."""
         try:
-            if self.async_mode:
-                return asyncio.run(self._async_execute_health_check())
+            if use_admin_uri:
+                # Use the admin URI for the health check
+                temp_uri=str(self.admin_uri)
+                temp_engine = create_engine(temp_uri)
+                with temp_engine.connect() as connection:
+                    connection.execute(text("SELECT 1"))
+                    return True
             else:
-                return self._execute_health_check()
+                if self.async_mode:
+                    # Check if there's an existing event loop
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # If the loop is running, use a future to run the coroutine
+                        return loop.run_until_complete(self._health_check_async())
+                    else:
+                        return asyncio.run(self._health_check_async())
+                else:
+                    return self._health_check_sync()
         except Exception as e:
             logger.error(f"Health check failed: {e}")
             return False
 
-    async def _async_create_tables(self):
+
+    async def _create_tables_async(self):
         """Asynchronously creates tables based on SQLAlchemy models."""
         try:
             async with self.engine.begin() as conn:
@@ -142,43 +229,67 @@ class Database:
         except Exception as e:
             logger.error(f"Async error creating tables: {e}")
 
+    def _create_tables_sync(self):
+        """Creates tables based on SQLAlchemy models synchronously."""
+        self.base.metadata.create_all(self.engine)
+
     def create_tables(self):
         """Creates tables based on SQLAlchemy models, synchronous or asynchronously."""
         if self.async_mode:
-            asyncio.run(self._async_create_tables())
+            # Check if there is an active event loop
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No running loop, we can safely use asyncio.run
+                asyncio.run(self._create_tables_async())
+            else:
+                # Running in an event loop, create a task
+                loop.create_task(self._create_tables_async())
         else:
-            self.base.metadata.create_all(self.engine)
+            self._create_tables_sync()
 
-    def drop_tables_sync(self):
+    def list_tables(self):
+        """Lists tables in the database synchronously."""
+        # Use synchronous execution to retrieve table names
+        if self.async_mode:
+            return asyncio.run(self._list_tables_async())
+        
+        with self.engine.connect() as connection:
+            inspector = inspect(connection)
+            return inspector.get_table_names()
+
+    async def _list_tables_async(self):
+        """Lists tables in the database asynchronously."""
+        async with self.engine.connect() as connection:
+            inspector = inspect(connection)
+            return await connection.run_sync(inspector.get_table_names)
+    
+    def _drop_tables_sync(self):
         """Drops all tables in the database synchronously."""
         self.base.metadata.drop_all(self.engine)
 
-    async def _async_drop_tables(self):
+    async def _drop_tables_async(self):
         """Asynchronously drops all tables in the database."""
         async with self.engine.begin() as conn:
             await conn.run_sync(self.base.metadata.drop_all)
 
-    def _drop_tables_async(self):
-        """Drops all tables in the database asynchronously."""
-        asyncio.run(self._async_drop_tables())
-
-    def drop_tables(self, async_mode: bool = None):
+    def drop_tables(self):
         """Unified method to drop tables synchronously or asynchronously."""
         if self.async_mode:
-            self.drop_tables_async()
+            asyncio.run(self._drop_tables_async())
         else:
-            self.drop_tables_sync()
+            self._drop_tables_sync() 
 
-    async def _async_disconnect(self):
+    async def _disconnect_async(self):
         """Asynchronously cleans up and closes the database connections."""
-        await self.engine.dispose()
+        await self.engine.dispose(close=False)
 
     def disconnect(self, async_mode: bool = None):
         """Cleans up and closes the database connections, synchronous or asynchronously."""
         if self.async_mode:
-            asyncio.run(self._async_disconnect())
+            asyncio.run(self._disconnect_async())
         else:
-            self.engine.dispose()
+            self.engine.dispose(close=False)
 
     def _execute_query(self, query: str, params: dict = None) -> List[Any]:
         """Execute a query and return results synchronously."""
