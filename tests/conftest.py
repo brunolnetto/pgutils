@@ -1,6 +1,7 @@
 import pytest
 
-from pgutils.core import DatabaseConfig, Database, MultiDatabase
+from pgutils.core import Database, MultiDatabase
+from pgutils.models import DatabaseConfig
 
 
 @pytest.fixture
@@ -39,14 +40,14 @@ def async_config():
 
 
 @pytest.fixture
-def sync_database(sync_config):
+def sync_database(sync_config: DatabaseConfig):
     db = Database(sync_config)
     yield db
     db.drop_database_if_exists(sync_config.db_name)
 
 
 @pytest.fixture
-def async_database(async_config):
+def async_database(async_config: DatabaseConfig):
     db = Database(async_config)
     yield db
     db.drop_database_if_exists(async_config.db_name)

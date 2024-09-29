@@ -45,3 +45,4 @@ def validate_postgresql_uri(uri: str, allow_async: bool = False):
         raise ValueError("Port is missing in the URI.")
 
     return uri
+

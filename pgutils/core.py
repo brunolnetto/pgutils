@@ -1,70 +1,20 @@
 from contextlib import contextmanager, asynccontextmanager
-from typing import Union, List, Any
+from typing import Union, List, Any, Generator
 import logging
 import asyncio
-import re
 
 
-from pydantic import BaseModel, AnyUrl, ValidationError, field_validator, Field
+from pydantic import ValidationError
 from sqlalchemy import create_engine, text, inspect
+from sqlalchemy.engine.url import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy.engine.url import make_url
 from sqlalchemy.exc import ProgrammingError
 
-from .utils import validate_postgresql_uri
+from .models import DatabaseConfig, Paginator
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_POOL_SIZE = 20
-DEFAULT_MAX_OVERFLOW = 10
-NOT_EMPTY_STR_COUNT = 1
-DEFAULT_MINIMUM_PASSWORD_SIZE = 1
-
-class DatabaseConfig(BaseModel):
-    uri: AnyUrl  # Database URI for regular operations
-    admin_username: str = Field(min_length=NOT_EMPTY_STR_COUNT) 
-    admin_password: str = Field(min_length=DEFAULT_MINIMUM_PASSWORD_SIZE)
-    async_mode: bool = False
-    pool_size: int = Field(default=DEFAULT_POOL_SIZE, gt=0)  # Must be greater than 0
-    max_overflow: int = Field(default=DEFAULT_MAX_OVERFLOW, ge=0)  # Must be 0 or greater
-
-    @property
-    def db_name(self) -> str:
-        """Extracts the database name from the URI."""
-        return self.uri.path.lstrip('/') if self.uri.path else None
-
-    @property
-    def admin_uri(self) -> AnyUrl:
-        """Constructs the admin URI using the username and password, falling back to defaults if missing."""
-        username = self.admin_username
-        password = self.admin_password
-        
-        admin_uri = f"postgresql://{username}:{password}@{self.uri.host}:{self.uri.port}"
-        # Validate the admin URI using shared validation logic
-        validate_postgresql_uri(admin_uri, allow_async=False)
-        return make_url(admin_uri)
-
-    @field_validator('uri')
-    def validate_uri(cls, value: AnyUrl):
-        """Validates the URI format to assert PostgreSQL with psycopg or asyncpg."""
-        # Check the scheme directly
-        if value.scheme not in ("postgresql", "postgresql+psycopg", "postgresql+asyncpg"):
-            raise ValueError("URI must start with 'postgresql', 'postgresql+psycopg', or 'postgresql+asyncpg'.")
-
-        # Optionally, you can also check the full URI structure here.
-        regex = re.compile(r"^postgresql(\+.*)?://[a-zA-Z0-9._%+-]+:[^@]+@[^:/]+:\d+/.+$")
-        if not regex.match(str(value)):
-            raise ValueError("Invalid PostgreSQL URI format.")
-        
-        return value
-
-    @field_validator('pool_size', 'max_overflow')
-    def validate_pool_params(cls, value):
-        if value < 0:
-            raise ValueError("Pool size and max overflow must be non-negative")
-        return value
-    
 
 class Database:
     """
@@ -92,6 +42,28 @@ class Database:
         # Create the database if a name is provided and it doesn't exist
         if config.db_name:  
             self.__create_database_if_not_exists(config.db_name)
+
+    def configure_parallel_queries(self):
+        """Configure PostgreSQL parallel query settings."""
+        async def set_parallel_queries():
+            queries=[
+                text("SET max_parallel_workers = 8;"),                  # Number of parallel workers allowed in total
+                text("SET max_parallel_workers_per_gather = 4;"),       # Number of workers allowed per query
+                text("SET min_parallel_table_scan_size = '8MB';"),      # Minimum table size for parallel scan
+                text("SET min_parallel_index_scan_size = '512kB';")     # Minimum index size for parallel scan
+            ]
+            
+            async with self.engine.connect() as conn:
+                for query in queries:
+                    await conn.execute(query)
+
+        if self.async_mode:
+            import asyncio
+            asyncio.run(set_parallel_queries())
+        else:
+            # For synchronous mode, you could define a similar synchronous setup if needed
+            pass
+
 
     def __create_database_if_not_exists(self, db_name: str):
         """Creates the database if it does not exist."""
@@ -280,27 +252,43 @@ class Database:
         else:
             self._drop_tables_sync() 
 
+    def add_audit_trigger(self, table_name: str):
+        with self.engine.connect() as conn:
+            conn.execute(text(f"""
+                CREATE OR REPLACE FUNCTION log_changes() RETURNS TRIGGER AS $$
+                BEGIN
+                    INSERT INTO audit_log (table_name, operation, old_data, new_data, changed_at)
+                    VALUES (TG_TABLE_NAME, TG_OP, row_to_json(OLD), row_to_json(NEW), NOW());
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql;
+
+                CREATE TRIGGER {table_name}_audit_trigger
+                AFTER INSERT OR UPDATE OR DELETE ON {table_name}
+                FOR EACH ROW EXECUTE FUNCTION log_changes();
+            """))
+
     async def _disconnect_async(self):
         """Asynchronously cleans up and closes the database connections."""
-        await self.engine.dispose(close=False)
+        await self.engine.dispose()
 
     def disconnect(self, async_mode: bool = None):
         """Cleans up and closes the database connections, synchronous or asynchronously."""
         if self.async_mode:
             asyncio.run(self._disconnect_async())
         else:
-            self.engine.dispose(close=False)
+            self.engine.dispose()
 
     def _execute_query(self, query: str, params: dict = None) -> List[Any]:
-        """Execute a query and return results synchronously."""
+        """Execute a prepared query and return results synchronously."""
         with self.engine.begin() as conn:
-            result = conn.execute(text(query), params)
+            result = conn.execute(text(query).bindparams(**params) if params else text(query))
             return result.fetchall()
 
     async def _async_execute_query(self, query: str, params: dict = None) -> List[Any]:
-        """Execute a query and return results asynchronously."""
+        """Execute a prepared query and return results asynchronously."""
         async with self.engine.begin() as conn:
-            result = await conn.execute(text(query), params)
+            result = await conn.execute(text(query).bindparams(**params) if params else text(query))
             return await result.fetchall()
 
     def query(self, query: str, params: dict = None) -> List[Any]:
@@ -309,7 +297,21 @@ class Database:
             return asyncio.run(self._async_execute_query(query, params))
         else:
             return self._execute_query(query, params)
+    
+    async def paginate(
+        self, query: str, params: dict = None, batch_size: int = 100
+    ) -> Union[Generator[List[Any], None, None], Generator]:
+        """Unified paginate interface for synchronous and asynchronous queries."""
+        paginator = Paginator(query, params, batch_size)
 
+        if self.async_mode:
+            async with self.engine.begin() as conn:
+                async for batch in paginator.paginate(conn):
+                    yield batch
+        else:
+            with self.engine.begin() as conn:
+                for batch in paginator.paginate(conn):
+                    yield batch
     def __repr__(self):
         return f"<Database(uri={self.mask_sensitive_data()}, async_mode={self.async_mode})>"
 

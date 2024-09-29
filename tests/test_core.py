@@ -1,7 +1,21 @@
 import pytest
 from pydantic import ValidationError
+
+from sqlalchemy import Column, Integer, String
 from sqlalchemy.exc import OperationalError
+
 from pgutils.core import DatabaseConfig, Database, MultiDatabase
+
+
+# Define your table model using the Database's Base
+def get_test_table_model(database):
+    class TestTable(database.base):
+        __tablename__ = 'test_table'
+        
+        id = Column(Integer, primary_key=True)
+        name = Column(String, nullable=False)
+    
+    return TestTable
 
 
 def test_sync_config(sync_database):
@@ -94,3 +108,13 @@ async def test_async_create_tables(async_config):
     assert db.health_check() is True, "Health check after async table creation should pass."
     await db.drop_tables()
     assert db.health_check() is True, "Health check after async table drop should pass."
+
+
+def test_list_tables(sync_database):
+    TestTable = get_test_table_model(sync_database)  # Get the table model
+    
+    # Create the table if it does not exist
+    sync_database.base.metadata.create_all(sync_database.engine)
+    
+    tables = sync_database.list_tables()  # Your method to list tables
+    assert 'test_table' in tables, "test_table should be listed in the database tables."
