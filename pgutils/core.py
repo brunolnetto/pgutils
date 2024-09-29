@@ -1,19 +1,17 @@
 from contextlib import contextmanager, asynccontextmanager
-from typing import Union, List, Any, Generator
-import logging
+from typing import Union, List, Any, Generator, AsyncGenerator
+from logging import getLogger, Logger 
 import asyncio
 
-
 from pydantic import ValidationError
+from sqlalchemy import DDL
 from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.orm import Session, sessionmaker, declarative_base
+from sqlalchemy.exc import ProgrammingError, OperationalError
 
 from .models import DatabaseConfig, Paginator
-
-logger = logging.getLogger(__name__)
 
 
 class Database:
@@ -22,48 +20,75 @@ class Database:
     Supports both synchronous and asynchronous operations.
     """
 
-    def __init__(self, config: DatabaseConfig):
+    def __init__(self, config: DatabaseConfig, logger: Logger = None):
+        self.config = config
         self.uri = make_url(str(config.uri))
         self.admin_uri = config.admin_uri
         self.base = declarative_base()
         self.async_mode = config.async_mode
+        self.parallel_queries_configured = False
+        self.logger = logger or getLogger(__name__)
 
-        self.engine = (
-            create_async_engine(str(config.uri), pool_size=config.pool_size, max_overflow=config.max_overflow)
-            if self.async_mode
-            else create_engine(str(config.uri), pool_size=config.pool_size, max_overflow=config.max_overflow)
-        )
-        self.session_maker = (
-            sessionmaker(bind=self.engine, class_=AsyncSession, expire_on_commit=False)
-            if self.async_mode
-            else sessionmaker(bind=self.engine)
-        )
+        self.engine = self._create_engine()
+        self.session_maker = self._create_sessionmaker()
 
         # Create the database if a name is provided and it doesn't exist
         if config.db_name:  
             self.__create_database_if_not_exists(config.db_name)
 
+        # Configure parallel queries on initialization
+        self.configure_parallel_queries()
+
+    def _create_engine(self):
+        return create_async_engine(
+            str(self.config.uri), 
+            pool_size=self.config.pool_size, 
+            max_overflow=self.config.max_overflow,
+            pool_pre_ping=True
+        ) if self.async_mode else create_engine(
+            str(self.config.uri), 
+            pool_size=self.config.pool_size, 
+            max_overflow=self.config.max_overflow,
+            pool_pre_ping=True
+        )
+
+    def _create_sessionmaker(self):
+        return sessionmaker(bind=self.engine, class_=AsyncSession, expire_on_commit=False) \
+            if self.async_mode else sessionmaker(bind=self.engine)
+
     def configure_parallel_queries(self):
-        """Configure PostgreSQL parallel query settings."""
-        async def set_parallel_queries():
-            queries=[
-                text("SET max_parallel_workers = 8;"),                  # Number of parallel workers allowed in total
-                text("SET max_parallel_workers_per_gather = 4;"),       # Number of workers allowed per query
-                text("SET min_parallel_table_scan_size = '8MB';"),      # Minimum table size for parallel scan
-                text("SET min_parallel_index_scan_size = '512kB';")     # Minimum index size for parallel scan
-            ]
-            
-            async with self.engine.connect() as conn:
-                for query in queries:
-                    await conn.execute(query)
+        """Configure PostgreSQL parallel query settings lazily."""
+        if self.parallel_queries_configured:
+            return  # If already configured, skip re-configuration
 
+        # Query definitions for parallel settings
+        queries = [
+            text("SET max_parallel_workers = 8;"),                 # Number of parallel workers allowed in total
+            text("SET max_parallel_workers_per_gather = 4;"),      # Number of workers allowed per query
+            text("SET min_parallel_table_scan_size = '8MB';"),     # Minimum table size for parallel scan
+            text("SET min_parallel_index_scan_size = '512kB';")    # Minimum index size for parallel scan
+        ]
+        
         if self.async_mode:
-            import asyncio
-            asyncio.run(set_parallel_queries())
-        else:
-            # For synchronous mode, you could define a similar synchronous setup if needed
-            pass
+            # Asynchronous configuration for parallel queries
+            async def set_parallel_queries_async():
+                async with self.engine.connect() as conn:
+                    for query in queries:
+                        await conn.execute(query)
+            
+            asyncio.run(set_parallel_queries_async())
 
+        else:
+            # Synchronous configuration for parallel queries
+            def set_parallel_queries_sync():
+                with self.engine.connect() as conn:
+                    for query in queries:
+                        conn.execute(query)
+            
+            set_parallel_queries_sync()
+
+        # Mark as configured after successful execution
+        self.parallel_queries_configured = True
 
     def __create_database_if_not_exists(self, db_name: str):
         """Creates the database if it does not exist."""
@@ -82,30 +107,74 @@ class Database:
     
     def drop_database_if_exists(self, db_name: str):
         """Drops the database if it exists."""
-        # Create a temporary engine for the admin connection
-        temp_uri=str(self.admin_uri)
-        temp_engine = create_engine(temp_uri, isolation_level="AUTOCOMMIT")
-
-        # First, terminate all active connections to the database
-        with temp_engine.connect() as connection:
+        with create_engine(str(self.admin_uri), isolation_level="AUTOCOMMIT").connect() as connection:
             try:
-                # Terminate active connections
                 connection.execute(text(f"""
                     SELECT pg_terminate_backend(pg_stat_activity.pid)
                     FROM pg_stat_activity
                     WHERE pg_stat_activity.datname = '{db_name}'
                     AND pid <> pg_backend_pid();
                 """))
-            except Exception as e:
-                logger.error(f"Error while terminating connections: {e}")
-
-        # Now, proceed to drop the database
-        with temp_engine.connect() as connection:
-            try:
-                # Attempt to drop the database
+                self.logger.info(f"Terminated connections for database '{db_name}'.")
                 connection.execute(text(f"DROP DATABASE IF EXISTS \"{db_name}\""))
-            except ProgrammingError as e:
-                logger.error(f"Error while dropping the database: {e}")
+                self.logger.info(f"Database '{db_name}' dropped successfully.")
+            except (OperationalError, ProgrammingError) as e:
+                self.logger.error(f"Error while dropping database '{db_name}': {e}")
+
+    async def create_indexes(self, indexes: dict):
+        """Creates indexes based on the provided configuration.
+
+        Args:
+            indexes (dict): A dictionary where keys are table names and values are dictionaries containing:
+                - 'columns': List of column names to include in the index.
+                - 'type': (Optional) The type of index to create (default is 'btree').
+        """
+        if not indexes:
+            return  # No indexes to create
+
+        async def create_index_statement(table_name: str, columns: list, index_type: str) -> DDL:
+            """Generate the DDL statement for creating an index."""
+            index_name = f"{table_name}_{'_'.join(columns)}_idx"
+            return DDL(
+                f"CREATE INDEX IF NOT EXISTS {index_name} ON {table_name} USING {index_type} ({', '.join(columns)});"
+            )
+
+        async def index_exists(session: AsyncSession, table_name: str, index_name: str) -> bool:
+            """Check if the index exists in the specified table."""
+            inspector = inspect(session.bind)
+            existing_indexes = inspector.get_indexes(table_name)
+            return any(index['name'] == index_name for index in existing_indexes)
+
+        for table_name, index_info in indexes.items():
+            columns = index_info['columns']
+            index_type = index_info.get('type', 'btree')
+            index_name = f"{table_name}_{'_'.join(columns)}_idx"
+
+            # Check if the index already exists
+            if self.async_mode:
+                async with AsyncSession(self.engine) as session:
+                    if await index_exists(session, table_name, index_name):
+                        print(f"Index {index_name} already exists on table {table_name}.")
+                        continue  # Skip creating the index if it exists
+
+                    index_stmt = create_index_statement(table_name, columns, index_type)
+                    try:
+                        async with session.begin():
+                            await session.execute(index_stmt)
+                    except Exception as e:
+                        print(f"Error creating index on {table_name}: {e}")
+            else:
+                with Session(self.engine) as session:
+                    if index_exists(session, table_name, index_name):
+                        print(f"Index {index_name} already exists on table {table_name}.")
+                        continue  # Skip creating the index if it exists
+
+                    index_stmt = create_index_statement(table_name, columns, index_type)
+                    try:
+                        with session.begin():
+                            session.execute(index_stmt)
+                    except Exception as e:
+                        print(f"Error creating index on {table_name}: {e}")
 
     async def _get_async_session(self):
         """Async method to get a database session."""
@@ -128,11 +197,6 @@ class Database:
         else:
             return self._get_sync_session()
 
-    async def get_async_session(self):
-        """Async context manager for a database session."""
-        async with self.session_maker() as session:
-            yield session
-
     def mask_sensitive_data(self) -> str:
         """Masks sensitive data (e.g., password) in the database URI."""
         masked_url = self.uri.set(password="******")
@@ -149,22 +213,22 @@ class Database:
                 connection.execute(text("SELECT 1"))
                 return True
         except ProgrammingError as e:
-            logger.error(f"Health check failed: {e}")
+            self.logger.error(f"Health check failed: {e}")
             return False
         except Exception:
             return False
 
     async def _health_check_async(self):
-        """Checks if the database connection is alive."""
+        """Checks if the database connection is alive."""    
+        # Implement your async health check logic here
         try:
-            async with self.engine.connect() as connection:
-                # Execute a simple query to test the connection
-                await connection.execute(text("SELECT 1"))
-                return True
-        except ProgrammingError as e:
-            logger.error(f"Health check failed: {e}")
-            return False
-        except Exception:
+            # Example health check query
+            async with AsyncSession(self.engine) as session:
+                async with session.begin():
+                    result = await session.execute(text("SELECT 1"))
+                    return result.scalar() == 1
+        except Exception as e:
+            self.logger.error(f"Async health check failed: {e}")
             return False
 
     def health_check(self, use_admin_uri: bool = False) -> bool:
@@ -172,24 +236,24 @@ class Database:
         try:
             if use_admin_uri:
                 # Use the admin URI for the health check
-                temp_uri=str(self.admin_uri)
-                temp_engine = create_engine(temp_uri)
+                temp_engine = create_engine(str(self.admin_uri))
                 with temp_engine.connect() as connection:
-                    connection.execute(text("SELECT 1"))
+                    check_query=text("SELECT 1")
+                    connection.execute(check_query)
                     return True
             else:
                 if self.async_mode:
-                    # Check if there's an existing event loop
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        # If the loop is running, use a future to run the coroutine
+                    try:
+                        # Check if there's an existing running event loop
+                        loop = asyncio.get_running_loop()
                         return loop.run_until_complete(self._health_check_async())
-                    else:
+                    except RuntimeError:
+                        # No running loop, create a new event loop to run the async method
                         return asyncio.run(self._health_check_async())
                 else:
                     return self._health_check_sync()
         except Exception as e:
-            logger.error(f"Health check failed: {e}")
+            self.logger.error(f"Health check failed: {e}")
             return False
 
 
@@ -199,7 +263,7 @@ class Database:
             async with self.engine.begin() as conn:
                 await conn.run_sync(self.base.metadata.create_all)
         except Exception as e:
-            logger.error(f"Async error creating tables: {e}")
+            self.logger.error(f"Async error creating tables: {e}")
 
     def _create_tables_sync(self):
         """Creates tables based on SQLAlchemy models synchronously."""
@@ -252,17 +316,31 @@ class Database:
         else:
             self._drop_tables_sync() 
 
-    def add_audit_trigger(self, table_name: str):
-        with self.engine.connect() as conn:
-            conn.execute(text(f"""
+    async def add_audit_trigger(self, audit_table_name: str, table_name: str):
+        async with self.engine.begin() as conn:
+            # Step 1: Create the audit log table if it doesn't exist
+            await conn.execute(text(f"""
+                CREATE TABLE IF NOT EXISTS {audit_table_name} (
+                    id SERIAL PRIMARY KEY,
+                    table_name TEXT NOT NULL,
+                    operation TEXT NOT NULL,
+                    old_data JSONB,
+                    new_data JSONB,
+                    changed_at TIMESTAMP NOT NULL DEFAULT NOW()
+                );
+            """))
+
+            # Step 2: Create the trigger function and the trigger itself
+            await conn.execute(text(f"""
                 CREATE OR REPLACE FUNCTION log_changes() RETURNS TRIGGER AS $$
                 BEGIN
-                    INSERT INTO audit_log (table_name, operation, old_data, new_data, changed_at)
+                    INSERT INTO {audit_table_name} (table_name, operation, old_data, new_data, changed_at)
                     VALUES (TG_TABLE_NAME, TG_OP, row_to_json(OLD), row_to_json(NEW), NOW());
                     RETURN NEW;
                 END;
                 $$ LANGUAGE plpgsql;
 
+                -- Create the trigger on the specified table
                 CREATE TRIGGER {table_name}_audit_trigger
                 AFTER INSERT OR UPDATE OR DELETE ON {table_name}
                 FOR EACH ROW EXECUTE FUNCTION log_changes();
@@ -279,13 +357,13 @@ class Database:
         else:
             self.engine.dispose()
 
-    def _execute_query(self, query: str, params: dict = None) -> List[Any]:
+    def _execute_query_sync(self, query: str, params: dict = None) -> List[Any]:
         """Execute a prepared query and return results synchronously."""
         with self.engine.begin() as conn:
             result = conn.execute(text(query).bindparams(**params) if params else text(query))
             return result.fetchall()
 
-    async def _async_execute_query(self, query: str, params: dict = None) -> List[Any]:
+    async def _execute_query_async(self, query: str, params: dict = None) -> List[Any]:
         """Execute a prepared query and return results asynchronously."""
         async with self.engine.begin() as conn:
             result = await conn.execute(text(query).bindparams(**params) if params else text(query))
@@ -293,25 +371,28 @@ class Database:
 
     def query(self, query: str, params: dict = None) -> List[Any]:
         """Unified method to execute queries synchronously or asynchronously."""
+        # Lazy initialization: configure parallel queries if not already done
+        if not self.parallel_queries_configured:
+            self.configure_parallel_queries()
+        
         if self.async_mode:
-            return asyncio.run(self._async_execute_query(query, params))
+            return asyncio.run(self._execute_query_async(query, params))
         else:
-            return self._execute_query(query, params)
+            return self._execute_query_sync(query, params)
     
     async def paginate(
         self, query: str, params: dict = None, batch_size: int = 100
-    ) -> Union[Generator[List[Any], None, None], Generator]:
+    ) -> AsyncGenerator[List[Any], None]:
         """Unified paginate interface for synchronous and asynchronous queries."""
         paginator = Paginator(query, params, batch_size)
 
         if self.async_mode:
-            async with self.engine.begin() as conn:
-                async for batch in paginator.paginate(conn):
-                    yield batch
+            async for page in paginator._async_paginated_query(self):
+                yield page
         else:
-            with self.engine.begin() as conn:
-                for batch in paginator.paginate(conn):
-                    yield batch
+            for page in paginator._sync_paginated_query(self):
+                yield page
+    
     def __repr__(self):
         return f"<Database(uri={self.mask_sensitive_data()}, async_mode={self.async_mode})>"
 
@@ -321,16 +402,17 @@ class MultiDatabase:
     Class to manage multiple Database instances.
     """
 
-    def __init__(self, databases: dict):
+    def __init__(self, databases: dict, logger: Logger = None):
+        self.logger = logger or getLogger(__name__)
+
         self.databases = {}
         for name, config in databases.items():
             try:
                 # Validate config
                 db_config = DatabaseConfig(**config)
-                self.databases[name] = Database(db_config)
+                self.databases[name] = Database(db_config, logger)
             except ValidationError as e:
-                logger.error(f"Invalid configuration for database '{name}': {e}")
-
+                self.logger.error(f"Invalid configuration for database '{name}': {e}")
 
     def get_database(self, name: str) -> Database:
         """Get a specific database instance."""
@@ -340,7 +422,13 @@ class MultiDatabase:
         """Health check for all databases (sync and async)."""
         results = {}
         for name, db in self.databases.items():
-            results[name] = db.health_check()
+            self.logger.info(f"Starting health check for database '{name}'")
+            try:
+                results[name] = db.health_check()
+                self.logger.info(f"Health check for database '{name}' succeeded: {results[name]}")
+            except Exception as e:
+                self.logger.error(f"Health check failed for database '{name}': {e}")
+                results[name] = False
         return results
 
     def create_tables_all(self):
@@ -355,3 +443,15 @@ class MultiDatabase:
 
     def __repr__(self):
         return f"<MultiDatabase(databases={list(self.databases.keys())})>"
+
+    async def __aenter__(self):
+        try:
+            yield self
+        finally:
+            await self.disconnect_all()
+
+    def __enter__(self):
+        try:
+            yield self
+        finally:
+            self.disconnect_all()

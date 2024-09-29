@@ -1,7 +1,9 @@
-from typing import List, Any, Generator, Union
+from typing import Dict, List, Any, Generator, Union, Optional
 import re
 
-from pydantic import BaseModel, AnyUrl, ValidationError, field_validator, Field
+from pydantic import (
+    BaseModel, AnyUrl, ValidationError, field_validator, model_validator, Field 
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine, text
@@ -24,6 +26,7 @@ class DatabaseConfig(BaseModel):
     async_mode: bool = False
     pool_size: int = Field(default=DEFAULT_POOL_SIZE, gt=0)  # Must be greater than 0
     max_overflow: int = Field(default=DEFAULT_MAX_OVERFLOW, ge=0)  # Must be 0 or greater
+    indexes: Optional[Dict[str, Dict[str, List[str]]]] = None  # New index configuration
 
     @property
     def db_name(self) -> str:
@@ -60,6 +63,39 @@ class DatabaseConfig(BaseModel):
         if value < 0:
             raise ValueError("Pool size and max overflow must be non-negative")
         return value
+
+    @model_validator(mode='before')
+    def validate_indexes(cls, values):
+        """Validates the index configuration."""
+        indexes = values.get('indexes', {})
+        
+        # Define valid index types and their requirements
+        valid_index_types = {
+            'btree': {'columns': True},
+            'gin': {'columns': True},
+            'gist': {'columns': True},
+            'hash': {'columns': True},
+            'spgist': {'columns': True},
+            'brin': {'columns': True},
+            'expression': {'columns': True, 'expression': True},
+            'partial': {'columns': True, 'condition': True},
+        }
+
+        for table_name, index_info in indexes.items():
+            if 'columns' not in index_info or not isinstance(index_info['columns'], list):
+                raise ValueError(f"Index for table '{table_name}' must include 'columns' as a list.")
+            
+            index_type = index_info.get('type', None)
+            if index_type not in valid_index_types:
+                raise ValueError(f"Index type for table '{table_name}' must be one of {list(valid_index_types.keys())}.")
+
+            # Check additional requirements for specific index types
+            requirements = valid_index_types[index_type]
+            for req_field, is_required in requirements.items():
+                if is_required and req_field not in index_info:
+                    raise ValueError(f"Index for table '{table_name}' of type '{index_type}' must include '{req_field}'.")
+
+        return values
 
 
 class Paginator:

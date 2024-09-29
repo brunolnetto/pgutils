@@ -32,12 +32,11 @@ def test_invalid_admin_credentials(sync_config):
     sync_config.admin_password = "wrongpassword"
     db = Database(sync_config)
 
-    print(db.admin_uri.password)
-
     # Indicate that the health check should use the admin URI
     assert db.health_check(use_admin_uri=True) is False, "Health check should fail with incorrect admin credentials."
 
 
+@pytest.mark.asyncio
 def test_async_config(async_database):
     db = async_database
     assert db.async_mode is True, "Database should be configured for async mode."
