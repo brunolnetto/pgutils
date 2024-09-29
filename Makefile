@@ -64,7 +64,7 @@ test: ## run tests quickly with the default Python
 
 watch: ## run tests on watchdog mode
 	poetry shell
-	ptw --clear .
+	ptw --poll --clear .
 
 lint: clean ## perform inplace lint fixes
 	ruff check --fix .
@@ -72,15 +72,6 @@ lint: clean ## perform inplace lint fixes
 cov: clean ## check code coverage quickly with the default Python
 	coverage run --source "$$PACKAGE_NAME" -m pytest
 	coverage report
-
-docs: clean ## generate Sphinx HTML documentation, including API docs
-	poetry shell
-	sphinx-apidoc -o "docs/" "$$PACKAGE_NAME" "tests" "examples" "conftest.py"
-	$(MAKE) -C docs html
-	$(BROWSER) 'docs/_build/html/index.html'
-
-docs-watch: docs ## compile the docs watching for changes
-	watchmedo shell-command -p '*.rst' -c '$$DO_DOCS_HTML' -R -D .
 
 env: ## Creates a virtual environment. Usage: make env
 	pip install virtualenv
