@@ -29,11 +29,13 @@ from pgutils.constants import (
     NOT_EMPTY_STR_COUNT,
     DEFAULT_MINIMUM_PASSWORD_SIZE,
     VALID_SCHEMES,
+    VALID_INDEX_TYPES,
 )
 
 
 class Index(BaseModel):
     type: str
+    table_name: str
     columns: List[str]
     expression: Optional[str] = None
     condition: Optional[str] = None
@@ -41,16 +43,12 @@ class Index(BaseModel):
     @model_validator(mode='before')
     def validate_index_type(self) -> Self:
         index_type = self.get('type')
-        valid_index_types = {
-            'btree', 'gin', 'gist', 'hash', 
-            'spgist', 'brin', 'expression', 'partial'
-        }
-        
-        if index_type not in valid_index_types:
-            raise ValueError(f"Index type must be one of {valid_index_types}.")
+
+        if index_type not in VALID_INDEX_TYPES:
+            raise ValueError(f"Index type must be one of {list(VALID_INDEX_TYPES.keys())}.")
 
         return self
-    
+
     @model_validator(mode='before')
     def validate_obj(self) -> Self:
         index_type = self.get('type')
@@ -62,13 +60,14 @@ class Index(BaseModel):
         return self
 
     @field_validator('columns')
-    def check_columns_field(cls, columns):
-        if not isinstance(columns, list):
-            raise ValueError("Index must include 'columns' as a list.")
+    def check_columns(cls, columns):        
+        if len(set(columns)) != len(columns):
+            raise ValueError("Index cannot have duplicate columns.")
+        
         return columns
 
 
-class DatabaseConfig(BaseModel):
+class DatabaseSettings(BaseModel):
     uri: AnyUrl  # Database URI for regular operations
     admin_username: str = Field(min_length=NOT_EMPTY_STR_COUNT) 
     admin_password: str = Field(min_length=DEFAULT_MINIMUM_PASSWORD_SIZE)
@@ -76,7 +75,6 @@ class DatabaseConfig(BaseModel):
     async_mode: bool = False
     pool_size: int = Field(default=DEFAULT_POOL_SIZE, gt=0)  # Must be greater than 0
     max_overflow: int = Field(default=DEFAULT_MAX_OVERFLOW, ge=0)  # Must be 0 or greater
-    indexes: Optional[Dict[str, Dict[str, List[str]]]] = None  # New index configuration
 
     @property
     def db_name(self) -> str:
@@ -94,33 +92,39 @@ class DatabaseConfig(BaseModel):
         validate_postgresql_uri(admin_uri, allow_async=False)
         return make_url(admin_uri)
 
+    def construct_uri(
+        self, drivername: str, username: str, password: str, 
+        host: str,  port: int, database: str
+    ) -> AnyUrl:
+        """Constructs a PostgreSQL URI from the provided components."""
+        return make_url(f"{drivername}://{username}:{password}@{host}:{port}/{database}")
+
+    @property
+    def admin_uri(self) -> AnyUrl:
+        """Constructs the admin URI."""
+        return self.construct_uri(
+            'postgresql+psycopg2', self.admin_username, self.admin_password, 
+            self.uri.host, self.uri.port, ''
+        )
+    
     @property
     def complete_uri(self) -> AnyUrl:
-        """Builds the complete URI, filling in missing username, password, and port."""
-        # Parse the existing URI
+        """Builds the complete URI."""
         parsed_uri = make_url(str(self.uri))
-        
-        scheme = parsed_uri.drivername
 
-        # Use admin username and password if they're missing
+        drivername = parsed_uri.drivername
         username = parsed_uri.username or self.admin_username
         password = parsed_uri.password or self.admin_password
-        
-        # Use the provided port or default to `default_port`
         port = parsed_uri.port or self.default_port
 
-        # Build the complete URI
-        complete_uri = f"{scheme}://{username}:{password}@{parsed_uri.host}:{port}/{parsed_uri.database or ''}"
-        
-        # Validate the newly constructed URI
-        validate_postgresql_uri(complete_uri, allow_async=self.async_mode)
-        
-        return make_url(complete_uri)
+        return self.construct_uri(
+            drivername, username, password, 
+            parsed_uri.host, port,  parsed_uri.database or ''
+        )
 
     @field_validator('uri')
     def validate_uri(cls, value: AnyUrl):
         """Validates the URI format to assert PostgreSQL with psycopg or asyncpg."""
-        
         
         # Check the scheme directly
         if value.scheme not in VALID_SCHEMES:
@@ -130,52 +134,6 @@ class DatabaseConfig(BaseModel):
         validate_postgresql_uri(str(value), allow_async = True)
         
         return value
-
-    @field_validator('pool_size', 'max_overflow')
-    def validate_pool_params(cls, value):
-        if value < 0:
-            raise ValueError("Pool size and max overflow must be non-negative")
-        return value
-
-    @model_validator(mode='before')
-    def validate_indexes(cls, values):
-        """Validates the index configuration."""
-        indexes = values.get('indexes', {})
-
-        # Define valid index types and their requirements
-        valid_index_types = {
-            'btree': {'columns': True},
-            'gin': {'columns': True},
-            'gist': {'columns': True},
-            'hash': {'columns': True},
-            'spgist': {'columns': True},
-            'brin': {'columns': True},
-            'expression': {'columns': True, 'expression': True},
-            'partial': {'columns': True, 'condition': True},
-        }
-
-        for table_name, index_info in indexes.items():
-            errors = []  # Collect errors for each index
-
-            # Validate 'columns' field
-            if 'columns' not in index_info or not isinstance(index_info['columns'], list):
-                errors.append(f"Index for table '{table_name}' must include 'columns' as a list.")
-
-            # Validate 'type' field and its requirements
-            index_type = index_info.get('type', None)
-            if index_type not in valid_index_types:
-                errors.append(f"Index type for table '{table_name}' must be one of {list(valid_index_types.keys())}.")
-            else:
-                requirements = valid_index_types[index_type]
-                for req_field, is_required in requirements.items():
-                    if is_required and req_field not in index_info:
-                        errors.append(f"Index for table '{table_name}' of type '{index_type}' must include '{req_field}'.")
-
-            # Raise a combined error message if there are any errors
-            if errors:
-                raise ValueError('\n'.join(errors))
-
-        return values
 
 
 class Paginator:
@@ -260,15 +218,6 @@ class Paginator:
         count_query = f"SELECT COUNT(*) FROM ({self.query}) as total"
         result = self.conn.execute(text(count_query).bindparams(**(self.params or {})))
         return result.scalar()
-
-    def paginated_query(self) -> Union[Generator[List[Any], None, None], Generator]:
-        """Unified interface for paginated queries."""
-        if isinstance(self.conn, AsyncSession):
-            # Return async generator
-            return self._async_paginated_query()
-        else:
-            # Return sync generator
-            return self._sync_paginated_query()
     
     def get_batch_query(self) -> str:
         """Generate the batched query for fetching data."""

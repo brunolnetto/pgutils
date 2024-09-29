@@ -1,5 +1,5 @@
 from contextlib import contextmanager, asynccontextmanager
-from typing import Union, List, Any, Generator, AsyncGenerator
+from typing import Union, List, Any, Generator, AsyncGenerator, Dict
 from logging import getLogger, Logger 
 import asyncio
 
@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import Session, sessionmaker, declarative_base
 from sqlalchemy.exc import ProgrammingError, OperationalError
 
-from .models import DatabaseConfig, Paginator
+from .models import DatabaseSettings, Index, Paginator 
 from .utils import run_async_method
 
 class Database:
@@ -20,39 +20,41 @@ class Database:
     Supports both synchronous and asynchronous operations.
     """
 
-    def __init__(self, config: DatabaseConfig, logger: Logger = None):
+    def __init__(self, config: DatabaseSettings, logger: Logger = None):
         self.config = config
         self.uri = make_url(str(config.complete_uri))
         self.admin_uri = config.admin_uri
         self.base = declarative_base()
         self.async_mode = config.async_mode
-        self.parallel_queries_configured = False
         self.logger = logger or getLogger(__name__)
 
         self.engine = self._create_engine()
         self.session_maker = self._create_sessionmaker()
 
-        # Create the database if a name is provided and it doesn't exist
-        if config.db_name:  
+        if config.db_name:
             self.__create_database_if_not_exists(config.db_name)
 
-        # Configure parallel queries on initialization
         self.configure_parallel_queries()
 
     def _create_engine(self):
-        return create_async_engine(
-            str(self.uri), 
-            pool_size=self.config.pool_size, 
+        """Create and return the database engine based on async mode."""
+        uri_str = str(self.uri)
+        self.logger.debug(f"Creating engine with URI: {uri_str}")
+        engine = create_async_engine(
+            uri_str,
+            pool_size=self.config.pool_size,
             max_overflow=self.config.max_overflow,
             pool_pre_ping=True
         ) if self.async_mode else create_engine(
-            str(self.uri), 
-            pool_size=self.config.pool_size, 
+            uri_str,
+            pool_size=self.config.pool_size,
             max_overflow=self.config.max_overflow,
             pool_pre_ping=True
         )
+        return engine
 
     def _create_sessionmaker(self):
+        """Create and return a sessionmaker for the database engine."""
         return sessionmaker(bind=self.engine, class_=AsyncSession, expire_on_commit=False) \
             if self.async_mode else sessionmaker(bind=self.engine)
 
@@ -85,16 +87,11 @@ class Database:
 
     def configure_parallel_queries(self):
         """Configure PostgreSQL parallel query settings lazily."""
-        if self.parallel_queries_configured:
-            return  # If already configured, skip re-configuration
-
         if self.async_mode:
             # Detect and handle the async loop
             run_async_method(self.set_parallel_queries_async)
         else:
             self.set_parallel_queries_sync()
-
-        self.parallel_queries_configured = True
 
     def __create_database_if_not_exists(self, db_name: str):
         """Creates the database if it does not exist."""
@@ -127,60 +124,60 @@ class Database:
             except (OperationalError, ProgrammingError) as e:
                 self.logger.error(f"Error while dropping database '{db_name}': {e}")
 
-    async def create_indexes(self, indexes: dict):
-        """Creates indexes based on the provided configuration.
+    # Check if the specified columns exist in the table
+    async def check_columns_exist(self, table_name: str, columns: List[str]) -> List[str]:
+        """Check if the specified columns exist in the table."""
+        inspector = inspect(self.engine)
+        actual_columns = {column['name'] for column in inspector.get_columns(table_name)}
+        missing_columns = [col for col in columns if col not in actual_columns]
+        return missing_columns
 
-        Args:
-            indexes (dict): A dictionary where keys are table names and values are dictionaries containing:
-                - 'columns': List of column names to include in the index.
-                - 'type': (Optional) The type of index to create (default is 'btree').
-        """
+    async def create_indexes(self, indexes: Dict[str, Index]):
+        """Creates indexes based on the provided configuration."""
         if not indexes:
             return  # No indexes to create
 
-        async def create_index_statement(table_name: str, columns: list, index_type: str) -> DDL:
-            """Generate the DDL statement for creating an index."""
-            index_name = f"{table_name}_{'_'.join(columns)}_idx"
-            return DDL(
-                f"CREATE INDEX IF NOT EXISTS {index_name} ON {table_name} USING {index_type} ({', '.join(columns)});"
-            )
-
-        async def index_exists(session: AsyncSession, table_name: str, index_name: str) -> bool:
-            """Check if the index exists in the specified table."""
-            inspector = inspect(session.bind)
-            existing_indexes = inspector.get_indexes(table_name)
-            return any(index['name'] == index_name for index in existing_indexes)
-
         for table_name, index_info in indexes.items():
-            columns = index_info['columns']
-            index_type = index_info.get('type', 'btree')
-            index_name = f"{table_name}_{'_'.join(columns)}_idx"
+            missing_columns = await self.check_columns_exist(table_name, index_info['columns'])
+            if missing_columns:
+                raise ValueError(f"Columns {missing_columns} do not exist in table '{table_name}'.")
 
-            # Check if the index already exists
-            if self.async_mode:
-                async with AsyncSession(self.engine) as session:
-                    if await index_exists(session, table_name, index_name):
-                        self.logger.info(f"Index {index_name} already exists on table {table_name}.")
-                        continue  # Skip creating the index if it exists
+            await self._create_index(table_name, index_info)
 
-                    index_stmt = create_index_statement(table_name, columns, index_type)
-                    try:
-                        async with session.begin():
-                            await session.execute(index_stmt)
-                    except Exception as e:
-                        self.logger.error(f"Error creating index on {table_name}: {e}")
-            else:
-                with Session(self.engine) as session:
-                    if index_exists(session, table_name, index_name):
-                        self.logger.info(f"Index {index_name} already exists on table {table_name}.")
-                        continue  # Skip creating the index if it exists
+    async def _create_index(self, table_name: str, index_info: Dict[str, Any]):
+        """Helper method to create a single index."""
+        columns = index_info['columns']
+        index_type = index_info.get('type', 'btree')
+        index_name = f"{table_name}_{'_'.join(columns)}_idx"
 
-                    index_stmt = create_index_statement(table_name, columns, index_type)
-                    try:
-                        with session.begin():
-                            session.execute(index_stmt)
-                    except Exception as e:
-                        self.logger.error(f"Error creating index on {table_name}: {e}")
+        async with AsyncSession(self.engine) as session:
+            if await self._index_exists(session, table_name, index_name):
+                self.logger.info(f"Index {index_name} already exists on table {table_name}.")
+                return
+
+            index_stmt = await self._create_index_statement(table_name, columns, index_type)
+            await self._execute_index_creation(session, index_stmt, table_name)
+
+    async def _create_index_statement(self, table_name: str, columns: list, index_type: str) -> DDL:
+        """Generate the DDL statement for creating an index."""
+        return DDL(
+            f"CREATE INDEX IF NOT EXISTS {table_name}_{'_'.join(columns)}_idx "
+            f"ON {table_name} USING {index_type} ({', '.join(columns)});"
+        )
+
+    async def _index_exists(self, session: AsyncSession, table_name: str, index_name: str) -> bool:
+        """Check if the index exists in the specified table."""
+        inspector = inspect(session.bind)
+        existing_indexes = inspector.get_indexes(table_name)
+        return any(index['name'] == index_name for index in existing_indexes)
+
+    async def _execute_index_creation(self, session: AsyncSession, index_stmt: DDL, table_name: str):
+        """Execute the index creation statement."""
+        try:
+            async with session.begin():
+                await session.execute(index_stmt)
+        except Exception as e:
+            self.logger.error(f"Error creating index on {table_name}: {e}")
 
     @asynccontextmanager
     async def _get_async_session(self) -> AsyncGenerator[AsyncSession, None]:
@@ -379,9 +376,6 @@ class Database:
     def query(self, query: str, params: dict = None) -> List[Any]:
         """Unified method to execute queries synchronously or asynchronously."""
         # Lazy initialization: configure parallel queries if not already done
-        if not self.parallel_queries_configured:
-            self.configure_parallel_queries()
-        
         if self.async_mode:
             return run_async_method(self._execute_query_async(query, params))
         else:
@@ -416,7 +410,7 @@ class MultiDatabase:
         for name, config in databases.items():
             try:
                 # Validate config
-                db_config = DatabaseConfig(**config)
+                db_config = DatabaseSettings(**config)
                 self.databases[name] = Database(db_config, logger)
             except ValidationError as e:
                 self.logger.error(f"Invalid configuration for database '{name}': {e}")

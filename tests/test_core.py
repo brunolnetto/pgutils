@@ -4,7 +4,7 @@ from pydantic import ValidationError
 from sqlalchemy import Column, Integer, String
 from sqlalchemy.exc import OperationalError
 
-from pgutils.core import DatabaseConfig, Database, MultiDatabase
+from pgutils.core import DatabaseSettings, Database, MultiDatabase
 
 
 # Define your table model using the Database's Base
@@ -28,7 +28,7 @@ def test_create_and_drop_tables(sync_database):
 
 def test_invalid_pool_size():
     with pytest.raises(ValidationError):
-        DatabaseConfig(
+        DatabaseSettings(
             uri="postgresql+psycopg://localhost:5432/mydatabase",
             admin_username="postgres",
             admin_password="postgres",

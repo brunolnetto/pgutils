@@ -12,3 +12,15 @@ VALID_SCHEMES = (
     "postgresql+psycopg2",
     "postgresql+asyncpg"
 )
+
+VALID_INDEX_TYPES = {
+    'btree': {'columns': True},
+    'gin': {'columns': True},
+    'gist': {'columns': True},
+    'hash': {'columns': True},
+    'spgist': {'columns': True},
+    'brin': {'columns': True},
+    'expression': {'columns': True, 'expression': True},
+    'partial': {'columns': True, 'condition': True},
+}
+
