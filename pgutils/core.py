@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker, declarative_base
 from sqlalchemy.exc import ProgrammingError, OperationalError
 
 from .models import DatabaseConfig, Paginator
-
+from .utils import run_async_method
 
 class Database:
     """
@@ -22,7 +22,7 @@ class Database:
 
     def __init__(self, config: DatabaseConfig, logger: Logger = None):
         self.config = config
-        self.uri = make_url(str(config.uri))
+        self.uri = make_url(str(config.complete_uri))
         self.admin_uri = config.admin_uri
         self.base = declarative_base()
         self.async_mode = config.async_mode
@@ -41,12 +41,12 @@ class Database:
 
     def _create_engine(self):
         return create_async_engine(
-            str(self.config.uri), 
+            str(self.uri), 
             pool_size=self.config.pool_size, 
             max_overflow=self.config.max_overflow,
             pool_pre_ping=True
         ) if self.async_mode else create_engine(
-            str(self.config.uri), 
+            str(self.uri), 
             pool_size=self.config.pool_size, 
             max_overflow=self.config.max_overflow,
             pool_pre_ping=True
@@ -56,11 +56,8 @@ class Database:
         return sessionmaker(bind=self.engine, class_=AsyncSession, expire_on_commit=False) \
             if self.async_mode else sessionmaker(bind=self.engine)
 
-    def configure_parallel_queries(self):
-        """Configure PostgreSQL parallel query settings lazily."""
-        if self.parallel_queries_configured:
-            return  # If already configured, skip re-configuration
-
+    # Asynchronous configuration for parallel queries
+    async def set_parallel_queries_async(self):
         # Query definitions for parallel settings
         queries = [
             text("SET max_parallel_workers = 8;"),                 # Number of parallel workers allowed in total
@@ -68,26 +65,35 @@ class Database:
             text("SET min_parallel_table_scan_size = '8MB';"),     # Minimum table size for parallel scan
             text("SET min_parallel_index_scan_size = '512kB';")    # Minimum index size for parallel scan
         ]
-        
+
+        async with self.engine.connect() as conn:
+            for query in queries:
+                await conn.execute(query)
+
+    def set_parallel_queries_sync(self):
+        queries = [
+            text("SET max_parallel_workers = 8;"),                 # Number of parallel workers allowed in total
+            text("SET max_parallel_workers_per_gather = 4;"),      # Number of workers allowed per query
+            text("SET min_parallel_table_scan_size = '8MB';"),     # Minimum table size for parallel scan
+            text("SET min_parallel_index_scan_size = '512kB';")    # Minimum index size for parallel scan
+        ]
+
+        # Synchronous configuration for parallel queries
+        with self.engine.connect() as conn:
+            for query in queries:
+                conn.execute(query)
+
+    def configure_parallel_queries(self):
+        """Configure PostgreSQL parallel query settings lazily."""
+        if self.parallel_queries_configured:
+            return  # If already configured, skip re-configuration
+
         if self.async_mode:
-            # Asynchronous configuration for parallel queries
-            async def set_parallel_queries_async():
-                async with self.engine.connect() as conn:
-                    for query in queries:
-                        await conn.execute(query)
-            
-            asyncio.run(set_parallel_queries_async())
-
+            # Detect and handle the async loop
+            run_async_method(self.set_parallel_queries_async)
         else:
-            # Synchronous configuration for parallel queries
-            def set_parallel_queries_sync():
-                with self.engine.connect() as conn:
-                    for query in queries:
-                        conn.execute(query)
-            
-            set_parallel_queries_sync()
+            self.set_parallel_queries_sync()
 
-        # Mark as configured after successful execution
         self.parallel_queries_configured = True
 
     def __create_database_if_not_exists(self, db_name: str):
@@ -154,7 +160,7 @@ class Database:
             if self.async_mode:
                 async with AsyncSession(self.engine) as session:
                     if await index_exists(session, table_name, index_name):
-                        print(f"Index {index_name} already exists on table {table_name}.")
+                        self.logger.info(f"Index {index_name} already exists on table {table_name}.")
                         continue  # Skip creating the index if it exists
 
                     index_stmt = create_index_statement(table_name, columns, index_type)
@@ -162,11 +168,11 @@ class Database:
                         async with session.begin():
                             await session.execute(index_stmt)
                     except Exception as e:
-                        print(f"Error creating index on {table_name}: {e}")
+                        self.logger.error(f"Error creating index on {table_name}: {e}")
             else:
                 with Session(self.engine) as session:
                     if index_exists(session, table_name, index_name):
-                        print(f"Index {index_name} already exists on table {table_name}.")
+                        self.logger.info(f"Index {index_name} already exists on table {table_name}.")
                         continue  # Skip creating the index if it exists
 
                     index_stmt = create_index_statement(table_name, columns, index_type)
@@ -174,28 +180,38 @@ class Database:
                         with session.begin():
                             session.execute(index_stmt)
                     except Exception as e:
-                        print(f"Error creating index on {table_name}: {e}")
+                        self.logger.error(f"Error creating index on {table_name}: {e}")
 
-    async def _get_async_session(self):
+    @asynccontextmanager
+    async def _get_async_session(self) -> AsyncGenerator[AsyncSession, None]:
         """Async method to get a database session."""
         async with self.session_maker() as session:
-            yield session
+            try:
+                yield session
+            except Exception as e:
+                await session.rollback()
+                raise e
+            finally:
+                await session.close()
 
     @contextmanager
-    def _get_sync_session(self):
+    def _get_sync_session(self) -> Generator[Session, None, None]:
         """Synchronous session manager."""
         session = self.session_maker()
         try:
             yield session
+        except Exception as e:
+            session.rollback()
+            raise e
         finally:
             session.close()
 
     def get_session(self) -> Union[asynccontextmanager, contextmanager]:
         """Unified session manager for synchronous and asynchronous operations."""
         if self.async_mode:
-            return self._get_async_session()
+            return self._get_async_session()  # Returns an async context manager
         else:
-            return self._get_sync_session()
+            return self._get_sync_session()  # Returns a sync context manager
 
     def mask_sensitive_data(self) -> str:
         """Masks sensitive data (e.g., password) in the database URI."""
@@ -207,8 +223,7 @@ class Database:
     def _health_check_sync(self):
         """Execute health check logic."""
         try:
-            with self.engine.connect() as connection:
-                print(self.uri.password)
+            with self.get_session() as connection:
                 # Execute a simple query to test the connection
                 connection.execute(text("SELECT 1"))
                 return True
@@ -218,15 +233,20 @@ class Database:
         except Exception:
             return False
 
-    async def _health_check_async(self):
+    async def _health_check_async(self) -> bool:
         """Checks if the database connection is alive."""    
-        # Implement your async health check logic here
+        # Implement your async health check logic here        
+        async with self.get_session() as session:    
+            query=text("SELECT 1")
+            result = await session.execute(query)
+            is_healthy=result.scalar() == 1
+            
+            return is_healthy
+
+    async def health_check_async(self) -> bool:
+        """Asynchronous health check for database."""
         try:
-            # Example health check query
-            async with AsyncSession(self.engine) as session:
-                async with session.begin():
-                    result = await session.execute(text("SELECT 1"))
-                    return result.scalar() == 1
+            return await self._health_check_async()
         except Exception as e:
             self.logger.error(f"Async health check failed: {e}")
             return False
@@ -238,24 +258,18 @@ class Database:
                 # Use the admin URI for the health check
                 temp_engine = create_engine(str(self.admin_uri))
                 with temp_engine.connect() as connection:
-                    check_query=text("SELECT 1")
+                    check_query = text("SELECT 1")
                     connection.execute(check_query)
                     return True
             else:
                 if self.async_mode:
-                    try:
-                        # Check if there's an existing running event loop
-                        loop = asyncio.get_running_loop()
-                        return loop.run_until_complete(self._health_check_async())
-                    except RuntimeError:
-                        # No running loop, create a new event loop to run the async method
-                        return asyncio.run(self._health_check_async())
+                    # Run the async function in the current event loop
+                    return run_async_method(self._health_check_async)
                 else:
                     return self._health_check_sync()
         except Exception as e:
             self.logger.error(f"Health check failed: {e}")
             return False
-
 
     async def _create_tables_async(self):
         """Asynchronously creates tables based on SQLAlchemy models."""
@@ -273,14 +287,7 @@ class Database:
         """Creates tables based on SQLAlchemy models, synchronous or asynchronously."""
         if self.async_mode:
             # Check if there is an active event loop
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                # No running loop, we can safely use asyncio.run
-                asyncio.run(self._create_tables_async())
-            else:
-                # Running in an event loop, create a task
-                loop.create_task(self._create_tables_async())
+            run_async_method(self._create_tables_async)
         else:
             self._create_tables_sync()
 
@@ -288,7 +295,7 @@ class Database:
         """Lists tables in the database synchronously."""
         # Use synchronous execution to retrieve table names
         if self.async_mode:
-            return asyncio.run(self._list_tables_async())
+            return run_async_method(self._list_tables_async())
         
         with self.engine.connect() as connection:
             inspector = inspect(connection)
@@ -296,7 +303,7 @@ class Database:
 
     async def _list_tables_async(self):
         """Lists tables in the database asynchronously."""
-        async with self.engine.connect() as connection:
+        async with self.get_session() as connection:
             inspector = inspect(connection)
             return await connection.run_sync(inspector.get_table_names)
     
@@ -312,7 +319,7 @@ class Database:
     def drop_tables(self):
         """Unified method to drop tables synchronously or asynchronously."""
         if self.async_mode:
-            asyncio.run(self._drop_tables_async())
+            run_async_method(self._drop_tables_async())
         else:
             self._drop_tables_sync() 
 
@@ -353,7 +360,7 @@ class Database:
     def disconnect(self, async_mode: bool = None):
         """Cleans up and closes the database connections, synchronous or asynchronously."""
         if self.async_mode:
-            asyncio.run(self._disconnect_async())
+            run_async_method(self._disconnect_async())
         else:
             self.engine.dispose()
 
@@ -376,7 +383,7 @@ class Database:
             self.configure_parallel_queries()
         
         if self.async_mode:
-            return asyncio.run(self._execute_query_async(query, params))
+            return run_async_method(self._execute_query_async(query, params))
         else:
             return self._execute_query_sync(query, params)
     

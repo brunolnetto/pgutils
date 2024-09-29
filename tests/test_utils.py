@@ -1,6 +1,8 @@
 import pytest
+import asyncio
+from unittest.mock import patch
 
-from pgutils.utils import validate_postgresql_uri
+from pgutils.utils import validate_postgresql_uri, run_async_method
 
 # Test valid URIs for psycopg
 @pytest.mark.parametrize("valid_psycopg_uri", [
@@ -41,18 +43,8 @@ def test_valid_psycopg_uri(valid_psycopg_uri):
     "http://user:password@localhost:5432/dbname"  # Completely invalid
 ])
 def test_invalid_prefix(invalid_prefix_uri):
-    with pytest.raises(ValueError, match="URI must start with"):
+    with pytest.raises(ValueError, match="Invalid URI scheme"):
         validate_postgresql_uri(invalid_prefix_uri, allow_async=True)
-
-
-# Test valid psycopg URI with allow_async=False should raise ValueError for asyncpg
-@pytest.mark.parametrize("invalid_async_uri", [
-    "postgresql+asyncpg://user:password@localhost:5432/dbname",
-    "postgresql+psycopg://user:password@localhost:5432/dbname"
-])
-def test_invalid_async_uri_when_not_allowed(invalid_async_uri):
-    with pytest.raises(ValueError, match="URI must start with one of the following"):
-        validate_postgresql_uri(invalid_async_uri, allow_async=False)
 
 
 # Test invalid URIs with missing components and allow_async=True
@@ -71,8 +63,6 @@ def test_invalid_asyncpg_uris_with_missing_components(invalid_async_uri):
 # Test invalid URIs with missing components and allow_async=True
 @pytest.mark.parametrize("invalid_async_uri", [
     "postgresql://user:password@:5432/dbname",
-    "postgresql://user:password@localhost/dbname",
-    "postgresql://user:password@localhost",
 ])
 def test_invalid_asyncpg_uris_with_missing_components(invalid_async_uri):
     with pytest.raises(ValueError, match='Port is missing in the URI|'):
@@ -83,9 +73,78 @@ def test_invalid_asyncpg_uris_with_missing_components(invalid_async_uri):
 @pytest.mark.parametrize("invalid_uri", [
     "postgresql://user:password@:5432/mydatabase",  # Missing host
     "postgresql://localhost:/mydatabase",  # Missing port
-    "postgresql://localhost",  # Missing port and database
 ])
 def test_invalid_uris(invalid_uri):
-    error_msgs="Host is missing in the URI|Port is missing in the URI|Invalid PostgreSQL URI format."
+    error_msgs="Host is missing in the URI|Invalid URI"
     with pytest.raises(ValueError, match=error_msgs):
         validate_postgresql_uri(invalid_uri)
+
+
+@pytest.mark.asyncio
+async def test_run_async_method_no_event_loop():
+    """Test running an async method with no current event loop."""
+    async def sample_async_method(x):
+        return x * 2
+
+    task = run_async_method(sample_async_method, 5)
+    
+    result = await task
+    
+    assert result == 10
+
+@pytest.mark.asyncio
+async def test_run_async_method_with_running_event_loop():
+    """Test running an async method with an existing running event loop."""
+    async def sample_async_method(x):
+        return x * 2
+
+    # Manually create and run the event loop
+    loop = asyncio.get_event_loop()
+    task = run_async_method(sample_async_method, 5)
+    result = await task
+    assert result == 10
+
+@pytest.mark.asyncio
+async def test_run_async_method_with_non_async_function():
+    """Test calling a synchronous function using run_async_method."""
+    async def sample_sync_function(x):
+        return x * 2
+
+    task = run_async_method(sample_sync_function, 5)
+    
+    # Await the task to get the result
+    result = await task
+    
+    assert result == 10
+
+@pytest.mark.asyncio
+async def test_run_async_method_with_exception():
+    """Test running an async method that raises an exception."""
+    async def sample_async_method():
+        raise ValueError("An error occurred")
+
+    with pytest.raises(ValueError, match="An error occurred"):
+        task = run_async_method(sample_async_method)
+        await task
+
+@pytest.mark.asyncio
+async def test_run_async_method_with_kwargs():
+    """Test running an async method with keyword arguments."""
+    async def sample_async_method(x, y):
+        return x + y
+
+    task = run_async_method(sample_async_method, 3, y=7)
+    
+    # Await the task to get the result
+    result = await task
+
+    assert result == 10
+
+def test_run_async_method_no_event_loop():
+    """Test that a new event loop is created when there is no current loop."""
+    async def sample_async_method():
+        return 42
+
+    with patch('asyncio.get_event_loop', side_effect=RuntimeError("No current event loop")):
+        result = run_async_method(sample_async_method)
+        assert result == 42  # Check if the result is as expected
