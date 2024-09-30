@@ -130,13 +130,35 @@ class Database:
             except (OperationalError, ProgrammingError) as e:
                 self.logger.error(f"Error while dropping database '{db_name}': {e}")
 
-    # Check if the specified columns exist in the table
-    async def check_columns_exist(self, table_name: str, columns: List[str]) -> List[str]:
-        """Check if the specified columns exist in the table."""
+    async def check_columns_exist_async(self, table_name: str, columns: List[str]) -> List[str]:
+        """Check if the specified columns exist in the table asynchronously."""
+        async with self.get_session() as session:
+            query=text(
+                f"""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = :table_name
+                """
+            )
+            result = await session.execute(query, {"table_name": table_name})
+            actual_columns = {row['column_name'] for row in result}
+            print(actual_columns)
+            missing_columns = [col for col in columns if col not in actual_columns]
+            return missing_columns
+
+    def check_columns_exist_sync(self, table_name: str, columns: List[str]) -> List[str]:
+        """Check if the specified columns exist in the table synchronously."""
         inspector = inspect(self.engine)
         actual_columns = {column['name'] for column in inspector.get_columns(table_name)}
         missing_columns = [col for col in columns if col not in actual_columns]
         return missing_columns
+
+    def check_columns_exist(self, table_name: str, columns: List[str]) -> List[str]:
+        """Check if the specified columns exist in the table, supporting both async and sync modes."""
+        if self.async_mode:
+            return run_async_method(self.check_columns_exist_async, table_name, columns)
+        else:
+            return self.check_columns_exist_sync(table_name, columns)
 
     async def create_indexes(self, indexes: Dict[str, Index]):
         """Creates indexes based on the provided configuration."""

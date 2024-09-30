@@ -4,7 +4,7 @@ from functools import wraps
 
 from pydantic import ValidationError
 from sqlalchemy import create_engine, text, inspect
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, AsyncSession
 
 
@@ -335,7 +335,7 @@ def test_get_total_count(sync_session_factory):
 
 @pytest.mark.asyncio
 async def test_sync_paginator_after_deleting_all_entries(sync_session_factory):
-    sync_session = sync_session_factory()
+    sync_session: Session = sync_session_factory()
     
     # Step 1: Delete all entries from the table
     delete_query = text("DELETE FROM test_table")
@@ -385,13 +385,8 @@ async def test_get_total_count_async(async_session_factory):
         assert total_count == 4
 
 # Example test for db_name property
-def test_db_name():
-    config = DatabaseSettings(
-        uri="postgresql://localhost/mydb",
-        admin_username="admin",
-        admin_password="password"
-    )
-    assert config.db_name == "mydb"
+def test_db_name(sync_settings: DatabaseSettings):
+    assert sync_settings.db_name == "db1"
 
 
 

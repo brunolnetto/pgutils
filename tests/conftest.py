@@ -1,13 +1,15 @@
 import pytest
+from typing import List, Any, Dict
+
 from pydantic import ValidationError
 from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, AsyncSession
-from typing import List, Any
+
 
 from pgutils.core import Database, MultiDatabase
 from pgutils.models import DatabaseSettings
-
+from pgutils.testing import prepare_database
 
 DEFAULT_PORT=5433
 
@@ -22,13 +24,13 @@ ASYNC_DB_URL = f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}
 def multidatabase_settings():
     settings_dict = {
         "sync": {
-            "uri": f"postgresql+psycopg://localhost:{DEFAULT_PORT}/db1",
+            "uri": f"postgresql+psycopg://postgres:postgres@localhost:{DEFAULT_PORT}/db1",
             "admin_username": "postgres",
             "admin_password": "postgres",
             "async_mode": False
         },
         "async": {
-            "uri": f"postgresql+asyncpg://localhost:{DEFAULT_PORT}/db2",
+            "uri": f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}/db2",
             "admin_username": "postgres",
             "admin_password": "postgres",
             "async_mode": True
@@ -40,6 +42,13 @@ def multidatabase_settings():
         for settings_name, settings_values in settings_dict.items()
     }
 
+
+@pytest.fixture()
+def multidatabase(multidatabase_settings: Dict[str, DatabaseSettings]):
+    for settings_name, settings in multidatabase_settings.items():
+        prepare_database(ADMIN_SYNC_URL, str(settings.uri), settings.db_name)
+    
+    return MultiDatabase(multidatabase_settings)
 
 @pytest.fixture
 def invalid_uri_config():
@@ -71,86 +80,16 @@ def sync_database(sync_settings: DatabaseSettings):
 
 
 @pytest.fixture
-def async_database(sync_settings: DatabaseSettings):
-    db = Database(sync_settings)
+def async_database(async_settings: DatabaseSettings):
+    db = Database(async_settings)
     yield db
-    db.drop_database_if_exists(sync_settings.db_name)
+    db.drop_database_if_exists(async_settings.db_name)
 
-
-def create_database(uri: str, db_name: str):
-    # Connect to the default PostgreSQL database
-    default_engine = create_engine(uri, isolation_level="AUTOCOMMIT")
-    
-    # Drop the database if it exists
-    with default_engine.connect() as conn:
-        try:
-            query=text(f"DROP DATABASE IF EXISTS {db_name};")
-            conn.execute(query)
-            print(f"Dropped database '{db_name}' if it existed.")
-        except Exception as e:
-            print(f"Error dropping database: {e}")
-
-    # Create the database
-    try:
-        with default_engine.connect() as conn:
-            conn.execute(text(f"CREATE DATABASE {db_name};"))
-            print(f"Database '{db_name}' created.")
-    except Exception as e:
-        print(f"Error creating database: {e}")
-
-def populate_database(uri: str, db_name: str):
-    default_engine = create_engine(uri, isolation_level="AUTOCOMMIT")
-    
-    # Create the test table and populate it with data
-    with default_engine.connect() as conn:
-        try:
-            # Create the table
-            conn.execute(
-                text("""
-                    CREATE TABLE IF NOT EXISTS test_table (
-                        id SERIAL PRIMARY KEY, 
-                        name TEXT
-                    );
-                """)
-            )
-
-            # Check available tables
-            result = conn.execute(
-                text("""
-                    SELECT 
-                        table_name 
-                    FROM 
-                        information_schema.tables 
-                    WHERE 
-                        table_schema='public';
-                """)
-            )
-            tables = [row[0] for row in result]
-
-            # Clear existing data
-            conn.execute(text("DELETE FROM test_table;"))
-
-            # Insert new data
-            conn.execute(
-                text("""
-                    INSERT INTO test_table (name) 
-                    VALUES ('Alice'), ('Bob'), ('Charlie'), ('David');
-                """)
-            )
-            conn.commit()
-
-        except Exception as e:
-            print(f"Error during table operations: {e}")
-            pytest.fail(f"Table creation or data insertion failed: {e}")
-
-def prepare_database():
-    create_database(ADMIN_SYNC_URL, DB_NAME)
-    populate_database(SYNC_DB_URL, DB_NAME)
 
 @pytest.fixture(scope="module")
 def sync_db_engine():
     """Create a test PostgreSQL database engine and ensure the database exists."""
-    prepare_database()
+    prepare_database(ADMIN_SYNC_URL, SYNC_DB_URL, DB_NAME)
 
     # Create the main engine for the tests, now connecting to database
     engine = create_engine(SYNC_DB_URL)
