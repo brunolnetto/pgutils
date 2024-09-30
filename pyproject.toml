@@ -7,7 +7,6 @@ license = "MIT"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-asyncio_default_fixture_loop_scope = "function"
 
 [tool.poetry.dependencies]
 python = "^3.10"
@@ -17,6 +16,7 @@ pytest-watch = "^4.2.0"
 psycopg-binary = "^3.2.2"
 psycopg2-binary = "^2.9.9"
 psycopg = "^3.2.2"
+sqlalchemy = {extras = ["asyncio"], version = "^2.0.35"}
 
 [tool.poetry.dev-dependencies]
 

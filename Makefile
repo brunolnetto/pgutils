@@ -70,8 +70,8 @@ lint: clean ## perform inplace lint fixes
 	ruff check --fix .
 
 cov: clean ## check code coverage quickly with the default Python
-	coverage run --source "$$PACKAGE_NAME" -m pytest
-	coverage report
+	coverage run --source "$$PACKAGE_NAME" --omit "tests/*,*/__init__.py" -m pytest
+	coverage report -m
 
 env: ## Creates a virtual environment. Usage: make env
 	pip install virtualenv
