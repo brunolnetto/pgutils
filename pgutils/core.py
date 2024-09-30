@@ -181,21 +181,22 @@ class Database:
         index_name = f"{table_name}_{'_'.join(columns)}_idx"
 
         async with AsyncSession(self.engine) as session:
-            if await self._index_exists(session, table_name, index_name):
-                self.logger.info(f"Index {index_name} already exists on table {table_name}.")
-                return
+            for column in columns:
+                if await self._index_exists(session, table_name, index_name):
+                    self.logger.info(f"Index {index_name} already exists on table {table_name}.")
+                    return
 
-            index_stmt = await self._create_index_statement(table_name, columns, index_type)
-            await self._execute_index_creation(session, index_stmt, table_name)
+                index_stmt = await self._create_index_statement(table_name, columns, index_type)
+                await self._execute_index_creation(session, index_stmt, table_name)
 
-    async def _create_index_statement(self, table_name: str, columns: list, index_type: str) -> DDL:
+    def _create_index_statement(self, table_name: str, column_name: str, index_type: str) -> DDL:
         """Generate the DDL statement for creating an index."""
         return DDL(
-            f"CREATE INDEX IF NOT EXISTS {table_name}_{'_'.join(columns)}_idx "
-            f"ON {table_name} USING {index_type} ({', '.join(columns)});"
+            f"CREATE INDEX IF NOT EXISTS {table_name}_{column_name}_idx "
+            f"ON {table_name} USING {index_type} ({column_name});"
         )
 
-    async def _index_exists(self, session: AsyncSession, table_name: str, index_name: str) -> bool:
+    def _index_exists(self, session: AsyncSession, table_name: str, index_name: str) -> bool:
         """Check if the index exists in the specified table."""
         inspector = inspect(session.bind)
         existing_indexes = inspector.get_indexes(table_name)

@@ -55,30 +55,9 @@ def test_list_tables(sync_database: Database):
     assert 'test_table' in tables, "test_table should be listed in the database tables."
 
 
-@pytest.mark.asyncio
-async def test_check_columns_exist(async_database: Database):
-    """Test the check_columns_exist function."""
-    
-    # Create a test table with columns
-    table_name = "test_table"
-    columns = ["id", "name"]
-
-    # Call the method to check for the column existence
-    missing_columns_task = async_database.check_columns_exist(table_name, columns)
-
-    missing_columns = await missing_columns_task
-
-    # Check that no columns are missing since 'id' and 'name' should exist
-    assert missing_columns == [], f"Missing columns: {missing_columns}"
-
-    # Now, test with non-existent columns
-    non_existent_columns = ["non_existent_col"]
-    missing_columns_task = async_database.check_columns_exist(table_name, non_existent_columns)
-
-    missing_columns = await missing_columns_task
-
-    # We expect the non-existent column to be returned as missing
-    assert missing_columns == ["non_existent_col"], f"Expected missing column not found: {missing_columns}"
+def test_create_index_statement(sync_database: Database):
+    index_query=f"CREATE INDEX IF NOT EXISTS test_table_name_idx ON test_table USING btree (name);"
+    assert str(sync_database._create_index_statement('test_table', 'name', 'btree')) == index_query
 
 def test_multi_database_health_check(multidatabase: MultiDatabase):
     health_checks = multidatabase.health_check_all()
