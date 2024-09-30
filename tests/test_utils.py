@@ -148,3 +148,25 @@ def test_run_async_method_no_event_loop():
     with patch('asyncio.get_event_loop', side_effect=RuntimeError("No current event loop")):
         result = run_async_method(sample_async_method)
         assert result == 42  # Check if the result is as expected
+        
+def test_missing_username():
+    # Case 1: Missing username but password is provided
+    uri = "postgresql://:password@localhost/dbname"
+    with pytest.raises(ValueError, match="Both username and password must be provided together, or neither."):
+        validate_postgresql_uri(uri)
+
+def test_missing_password():
+    # Case 2: Missing password but username is provided
+    uri = "postgresql://username:@localhost/dbname"
+    with pytest.raises(ValueError, match="Both username and password must be provided together, or neither."):
+        validate_postgresql_uri(uri)
+
+def test_valid_username_and_password():
+    # Case 3: Both username and password are provided correctly
+    uri = "postgresql://username:password@localhost/dbname"
+    assert validate_postgresql_uri(uri) == uri
+
+def test_no_username_or_password():
+    # Case 4: Neither username nor password is provided
+    uri = "postgresql://localhost/dbname"
+    assert validate_postgresql_uri(uri) == uri

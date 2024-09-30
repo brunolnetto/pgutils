@@ -1,6 +1,7 @@
 from contextlib import contextmanager, asynccontextmanager
 from typing import Union, List, Any, Generator, AsyncGenerator, Dict
 from logging import getLogger, Logger 
+from re import match
 import asyncio
 
 from pydantic import ValidationError
@@ -9,7 +10,12 @@ from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import Session, sessionmaker, declarative_base
-from sqlalchemy.exc import ProgrammingError, OperationalError
+from sqlalchemy.exc import (
+    ProgrammingError, 
+    OperationalError, 
+    ResourceClosedError, 
+    SQLAlchemyError
+)
 
 from .models import DatabaseSettings, Index, Paginator 
 from .utils import run_async_method
@@ -58,32 +64,26 @@ class Database:
         return sessionmaker(bind=self.engine, class_=AsyncSession, expire_on_commit=False) \
             if self.async_mode else sessionmaker(bind=self.engine)
 
-    # Asynchronous configuration for parallel queries
-    async def set_parallel_queries_async(self):
-        # Query definitions for parallel settings
-        queries = [
-            text("SET max_parallel_workers = 8;"),                 # Number of parallel workers allowed in total
-            text("SET max_parallel_workers_per_gather = 4;"),      # Number of workers allowed per query
-            text("SET min_parallel_table_scan_size = '8MB';"),     # Minimum table size for parallel scan
-            text("SET min_parallel_index_scan_size = '512kB';")    # Minimum index size for parallel scan
+    def _get_parallel_queries(self):
+        """Return the list of queries for parallel configuration."""
+        return [
+            "SET max_parallel_workers = 8;",                 # Number of parallel workers allowed in total
+            "SET max_parallel_workers_per_gather = 4;",      # Number of workers allowed per query
+            "SET min_parallel_table_scan_size = '8MB';",     # Minimum table size for parallel scan
+            "SET min_parallel_index_scan_size = '512kB';"    # Minimum index size for parallel scan
         ]
-
-        async with self.engine.connect() as conn:
-            for query in queries:
-                await conn.execute(query)
 
     def set_parallel_queries_sync(self):
-        queries = [
-            text("SET max_parallel_workers = 8;"),                 # Number of parallel workers allowed in total
-            text("SET max_parallel_workers_per_gather = 4;"),      # Number of workers allowed per query
-            text("SET min_parallel_table_scan_size = '8MB';"),     # Minimum table size for parallel scan
-            text("SET min_parallel_index_scan_size = '512kB';")    # Minimum index size for parallel scan
-        ]
+        """Synchronous configuration for parallel queries."""
+        queries = self._get_parallel_queries()
+        for query in queries:
+            self._execute_query_sync(query)
 
-        # Synchronous configuration for parallel queries
-        with self.engine.connect() as conn:
-            for query in queries:
-                conn.execute(query)
+    async def set_parallel_queries_async(self):
+        """Asynchronous configuration for parallel queries."""
+        queries = self._get_parallel_queries()
+        for query in queries:
+            await self._execute_query_async(query)
 
     def configure_parallel_queries(self):
         """Configure PostgreSQL parallel query settings lazily."""
@@ -110,7 +110,13 @@ class Database:
     
     def drop_database_if_exists(self, db_name: str):
         """Drops the database if it exists."""
-        with create_engine(str(self.admin_uri), isolation_level="AUTOCOMMIT").connect() as connection:
+        admin_uri_str=str(self.admin_uri)
+        sync_engine=create_engine(
+            admin_uri_str, 
+            isolation_level="AUTOCOMMIT"
+        )
+        
+        with sync_engine.connect() as connection:
             try:
                 connection.execute(text(f"""
                     SELECT pg_terminate_backend(pg_stat_activity.pid)
@@ -135,11 +141,13 @@ class Database:
     async def create_indexes(self, indexes: Dict[str, Index]):
         """Creates indexes based on the provided configuration."""
         if not indexes:
+            self.logger.warning("No indexes provided for creation.")
             return  # No indexes to create
 
         for table_name, index_info in indexes.items():
             missing_columns = await self.check_columns_exist(table_name, index_info['columns'])
             if missing_columns:
+                self.logger.error(f"Missing columns {missing_columns} in table '{table_name}'.")
                 raise ValueError(f"Columns {missing_columns} do not exist in table '{table_name}'.")
 
             await self._create_index(table_name, index_info)
@@ -206,9 +214,9 @@ class Database:
     def get_session(self) -> Union[asynccontextmanager, contextmanager]:
         """Unified session manager for synchronous and asynchronous operations."""
         if self.async_mode:
-            return self._get_async_session()  # Returns an async context manager
+            return self._get_async_session()
         else:
-            return self._get_sync_session()  # Returns a sync context manager
+            return self._get_sync_session()
 
     def mask_sensitive_data(self) -> str:
         """Masks sensitive data (e.g., password) in the database URI."""
@@ -237,7 +245,7 @@ class Database:
             query=text("SELECT 1")
             result = await session.execute(query)
             is_healthy=result.scalar() == 1
-            
+            print(is_healthy)
             return is_healthy
 
     async def health_check_async(self) -> bool:
@@ -321,34 +329,56 @@ class Database:
             self._drop_tables_sync() 
 
     async def add_audit_trigger(self, audit_table_name: str, table_name: str):
-        async with self.engine.begin() as conn:
-            # Step 1: Create the audit log table if it doesn't exist
-            await conn.execute(text(f"""
-                CREATE TABLE IF NOT EXISTS {audit_table_name} (
-                    id SERIAL PRIMARY KEY,
-                    table_name TEXT NOT NULL,
-                    operation TEXT NOT NULL,
-                    old_data JSONB,
-                    new_data JSONB,
-                    changed_at TIMESTAMP NOT NULL DEFAULT NOW()
-                );
-            """))
+        """Add an audit trigger to the specified table."""
+        # Validate table names to prevent SQL injection
+        is_audit_tablename_valid=not self._is_valid_table_name(audit_table_name)
+        is_table_name_valid=not self._is_valid_table_name(table_name)
+        are_tablenames_valid=is_audit_tablename_valid or is_table_name_valid
+        if are_tablenames_valid:
+            raise ValueError("Invalid table name provided.")
 
-            # Step 2: Create the trigger function and the trigger itself
-            await conn.execute(text(f"""
-                CREATE OR REPLACE FUNCTION log_changes() RETURNS TRIGGER AS $$
-                BEGIN
-                    INSERT INTO {audit_table_name} (table_name, operation, old_data, new_data, changed_at)
-                    VALUES (TG_TABLE_NAME, TG_OP, row_to_json(OLD), row_to_json(NEW), NOW());
-                    RETURN NEW;
-                END;
-                $$ LANGUAGE plpgsql;
+        # Prepare queries
+        create_audit_table_query = f"""
+            CREATE TABLE IF NOT EXISTS {audit_table_name} (
+                id SERIAL PRIMARY KEY,
+                table_name TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                old_data JSONB,
+                new_data JSONB,
+                changed_at TIMESTAMP DEFAULT NOW()
+            );
+        """
 
-                -- Create the trigger on the specified table
-                CREATE TRIGGER {table_name}_audit_trigger
-                AFTER INSERT OR UPDATE OR DELETE ON {table_name}
-                FOR EACH ROW EXECUTE FUNCTION log_changes();
-            """))
+        create_trigger_function_query = f"""
+            CREATE OR REPLACE FUNCTION log_changes() RETURNS TRIGGER AS $$
+            BEGIN
+                INSERT INTO {audit_table_name} (table_name, operation, old_data, new_data, changed_at)
+                VALUES (TG_TABLE_NAME, TG_OP, row_to_json(OLD), row_to_json(NEW), NOW());
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+        """
+
+        create_trigger_query = f"""
+            CREATE TRIGGER {table_name}_audit_trigger
+            AFTER INSERT OR UPDATE OR DELETE ON {table_name}
+            FOR EACH ROW EXECUTE FUNCTION log_changes();
+        """
+
+        # Execute queries
+        try:
+            await self._execute_query_async(create_audit_table_query)
+            await self._execute_query_async(create_trigger_function_query)
+            await self._execute_query_async(create_trigger_query)
+        except SQLAlchemyError as e:
+            raise Exception(f"An error occurred while adding the audit trigger: {str(e)}")
+
+    def _is_valid_table_name(self, table_name: str) -> bool:
+        """Validate table name against SQL injection."""
+        # Check for valid table name using a regex pattern: 
+        #   Alphanumeric and underscore, starting with a letter or underscore
+        pattern = r"^[a-zA-Z_][a-zA-Z0-9_]*$"
+        return match(pattern, table_name) is not None
 
     async def _disconnect_async(self):
         """Asynchronously cleans up and closes the database connections."""
@@ -361,23 +391,32 @@ class Database:
         else:
             self.engine.dispose()
 
-    def _execute_query_sync(self, query: str, params: dict = None) -> List[Any]:
+    def _execute_query_sync(self, query: str, params: Dict[str, Any] = None) -> List[Any]:
         """Execute a prepared query and return results synchronously."""
-        with self.engine.begin() as conn:
-            result = conn.execute(text(query).bindparams(**params) if params else text(query))
-            return result.fetchall()
+        with self.engine.begin() as conn:    
+            try:
+                # Prepare and execute the query
+                result = conn.execute(text(query).bindparams(**params) if params else text(query))
+        
+                return result.fetchall() if self.async_mode else result.fetchall()
+            except ResourceClosedError:
+                return []
 
-    async def _execute_query_async(self, query: str, params: dict = None) -> List[Any]:
+    async def _execute_query_async(self, query: str, params: Dict[str, Any] = None) -> List[Any]:
         """Execute a prepared query and return results asynchronously."""
         async with self.engine.begin() as conn:
-            result = await conn.execute(text(query).bindparams(**params) if params else text(query))
-            return await result.fetchall()
+            try:
+                # Prepare and execute the query
+                result = await conn.execute(text(query).bindparams(**params) if params else text(query))
+                return await result.fetchall()
+            except ResourceClosedError:
+                    return []
 
-    def query(self, query: str, params: dict = None) -> List[Any]:
+    def query(self, query: str, params: Dict[str, Any] = None) -> List[Any]:
         """Unified method to execute queries synchronously or asynchronously."""
         # Lazy initialization: configure parallel queries if not already done
         if self.async_mode:
-            return run_async_method(self._execute_query_async(query, params))
+            return run_async_method(self._execute_query_async, query, params)
         else:
             return self._execute_query_sync(query, params)
     
@@ -403,15 +442,18 @@ class MultiDatabase:
     Class to manage multiple Database instances.
     """
 
-    def __init__(self, databases: dict, logger: Logger = None):
+    def __init__(
+        self, 
+        settings_dict: Dict[str, DatabaseSettings], 
+        logger: Logger = None
+    ):
         self.logger = logger or getLogger(__name__)
 
         self.databases = {}
-        for name, config in databases.items():
+        for name, settings in settings_dict.items():
             try:
                 # Validate config
-                db_config = DatabaseSettings(**config)
-                self.databases[name] = Database(db_config, logger)
+                self.databases[name] = Database(settings, logger)
             except ValidationError as e:
                 self.logger.error(f"Invalid configuration for database '{name}': {e}")
 

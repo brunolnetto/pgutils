@@ -22,10 +22,12 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .utils import validate_postgresql_uri
-from pgutils.constants import (
+from .constants import (
     PAGINATION_BATCH_SIZE,
     DEFAULT_POOL_SIZE,
     DEFAULT_MAX_OVERFLOW,
+    DEFAULT_ADMIN_USERNAME,
+    DEFAULT_ADMIN_PASSWORD,
     NOT_EMPTY_STR_COUNT,
     DEFAULT_MINIMUM_PASSWORD_SIZE,
     VALID_SCHEMES,
@@ -69,8 +71,8 @@ class Index(BaseModel):
 
 class DatabaseSettings(BaseModel):
     uri: AnyUrl  # Database URI for regular operations
-    admin_username: str = Field(min_length=NOT_EMPTY_STR_COUNT) 
-    admin_password: str = Field(min_length=DEFAULT_MINIMUM_PASSWORD_SIZE)
+    admin_username: str = Field(default=DEFAULT_ADMIN_USERNAME, min_length=NOT_EMPTY_STR_COUNT) 
+    admin_password: str = Field(default=DEFAULT_ADMIN_PASSWORD, min_length=DEFAULT_MINIMUM_PASSWORD_SIZE)
     default_port: int = 5432
     async_mode: bool = False
     pool_size: int = Field(default=DEFAULT_POOL_SIZE, gt=0)  # Must be greater than 0
@@ -87,7 +89,7 @@ class DatabaseSettings(BaseModel):
         username = self.admin_username
         password = self.admin_password
         
-        admin_uri = f"postgresql://{username}:{password}@{self.uri.host}:{self.uri.port}"
+        admin_uri = f"postgresql+psycopg2://{username}:{password}@{self.uri.host}:{self.uri.port}"
         # Validate the admin URI using shared validation logic
         validate_postgresql_uri(admin_uri, allow_async=False)
         return make_url(admin_uri)
@@ -99,14 +101,6 @@ class DatabaseSettings(BaseModel):
         """Constructs a PostgreSQL URI from the provided components."""
         return make_url(f"{drivername}://{username}:{password}@{host}:{port}/{database}")
 
-    @property
-    def admin_uri(self) -> AnyUrl:
-        """Constructs the admin URI."""
-        return self.construct_uri(
-            'postgresql+psycopg2', self.admin_username, self.admin_password, 
-            self.uri.host, self.uri.port, ''
-        )
-    
     @property
     def complete_uri(self) -> AnyUrl:
         """Builds the complete URI."""
@@ -151,10 +145,6 @@ class Paginator:
         self.current_offset = 0
         self.total_count = None
 
-    def _get_batch_query(self) -> str:
-        """Construct a paginated query with LIMIT and OFFSET."""
-        return f"{self.query} LIMIT :limit OFFSET :offset"
-
     def _get_total_count(self) -> int:
         """Fetch the total count of records (optional)."""
         count_query = f"SELECT COUNT(*) FROM ({self.query}) as total"
@@ -175,17 +165,20 @@ class Paginator:
             result = self.conn.execute(batch_query)
             batch = result.fetchall()
 
-            if not batch:
-                break
-
             yield batch
             self.current_offset += self.batch_size
 
+    async def _get_total_count_async(self) -> int:
+        """Fetch the total count of records asynchronously."""
+        count_query = f"SELECT COUNT(*) FROM ({self.query}) as total"
+        query=text(count_query).bindparams(**(self.params or {}))
+        result = await self.conn.execute(query)
+        return result.scalar()
 
     async def _async_paginated_query(self):
         """Async generator to fetch results batch by batch."""
         if self.total_count is None:
-            self.total_count = await self._get_total_count()  # Await the total count
+            self.total_count = await self._get_total_count_async()  # Await the total count
 
         while self.current_offset < self.total_count:
             batch_query=text(self._get_batch_query()).bindparams(
@@ -196,29 +189,22 @@ class Paginator:
             result = await self.conn.execute(batch_query)
             batch = result.fetchall()
 
-            if not batch:
-                break
-
             yield batch
             self.current_offset += self.batch_size
 
-    async def paginate(self) -> Union[AsyncGenerator[List[Any], None], AsyncGenerator]:
+    def paginate(self) -> Union[AsyncGenerator[List[Any], None], Generator[List[Any], None, None]]:
         """Unified paginate method to handle both sync and async queries."""
-        if isinstance(self.conn, AsyncConnection):
+        if isinstance(self.conn, (AsyncConnection, AsyncSession)):
             # Asynchronous pagination
-            async for batch in self._async_paginated_query():
-                yield batch
+            async def async_generator():
+                async for batch in self._async_paginated_query():
+                    yield batch
+            return async_generator()  # Return the async generator
+            
         else:
             # Synchronous pagination
-            for batch in self._sync_paginated_query():
-                yield batch
+            return self._sync_paginated_query()  # Return the sync generator
 
-    def _get_total_count_async(self) -> int:
-        """Fetch the total count of records asynchronously."""
-        count_query = f"SELECT COUNT(*) FROM ({self.query}) as total"
-        result = self.conn.execute(text(count_query).bindparams(**(self.params or {})))
-        return result.scalar()
-    
-    def get_batch_query(self) -> str:
-        """Generate the batched query for fetching data."""
+    def _get_batch_query(self) -> str:
+        """Construct a paginated query with LIMIT and OFFSET."""
         return f"{self.query} LIMIT :limit OFFSET :offset"
