@@ -19,7 +19,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession, AsyncConnection
 
 from .utils import validate_postgresql_uri
 from .constants import (
@@ -133,10 +134,10 @@ class DatabaseSettings(BaseModel):
 class Paginator:
     def __init__(
         self, 
-        conn: Union[Connection, AsyncConnection],
+        conn: Union[Session, AsyncSession, Connection, AsyncConnection],
         query: str, 
-        params: dict = None, 
-        batch_size: int = PAGINATION_BATCH_SIZE
+        batch_size: int = PAGINATION_BATCH_SIZE,
+        params: dict = None
     ):
         self.conn =  conn
         self.query = query
@@ -148,6 +149,7 @@ class Paginator:
     def _get_total_count(self) -> int:
         """Fetch the total count of records (optional)."""
         count_query = f"SELECT COUNT(*) FROM ({self.query}) as total"
+
         result = self.conn.execute(text(count_query).bindparams(**(self.params or {})))
         return result.scalar()  # Assuming a single result
 
@@ -181,7 +183,8 @@ class Paginator:
             self.total_count = await self._get_total_count_async()  # Await the total count
 
         while self.current_offset < self.total_count:
-            batch_query=text(self._get_batch_query()).bindparams(
+            batch_query_text=text(self._get_batch_query())
+            batch_query=batch_query_text.bindparams(
                 limit=self.batch_size,
                 offset=self.current_offset,
                 **(self.params or {})

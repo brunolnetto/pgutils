@@ -19,6 +19,7 @@ from sqlalchemy.exc import (
 
 from .models import DatabaseSettings, Index, Paginator 
 from .utils import run_async_method
+from .constants import PAGINATION_BATCH_SIZE
 
 class Database:
     """
@@ -142,7 +143,7 @@ class Database:
             )
             result = await session.execute(query, {"table_name": table_name})
             actual_columns = {row['column_name'] for row in result}
-            print(actual_columns)
+
             missing_columns = [col for col in columns if col not in actual_columns]
             return missing_columns
 
@@ -268,7 +269,7 @@ class Database:
             query=text("SELECT 1")
             result = await session.execute(query)
             is_healthy=result.scalar() == 1
-            print(is_healthy)
+
             return is_healthy
 
     async def health_check_async(self) -> bool:
@@ -299,41 +300,202 @@ class Database:
             self.logger.error(f"Health check failed: {e}")
             return False
 
-    async def _create_tables_async(self):
-        """Asynchronously creates tables based on SQLAlchemy models."""
-        try:
-            async with self.engine.begin() as conn:
-                await conn.run_sync(self.base.metadata.create_all)
-        except Exception as e:
-            self.logger.error(f"Async error creating tables: {e}")
-
-    def _create_tables_sync(self):
-        """Creates tables based on SQLAlchemy models synchronously."""
-        self.base.metadata.create_all(self.engine)
-
-    def create_tables(self):
-        """Creates tables based on SQLAlchemy models, synchronous or asynchronously."""
+    def execute(self, sync_query: str, async_query: callable, params: dict = None):
+        """General method for synchronous and asynchronous query execution."""
         if self.async_mode:
-            # Check if there is an active event loop
-            run_async_method(self._create_tables_async)
-        else:
-            self._create_tables_sync()
+            return run_async_method(async_query, params)
 
-    def list_tables(self):
-        """Lists tables in the database synchronously."""
-        # Use synchronous execution to retrieve table names
-        if self.async_mode:
-            return run_async_method(self._list_tables_async())
+        with self.engine.connect() as session:
+            # Prepare the query with bound parameters
+            query = text(sync_query).bindparams(**params) if params else text(sync_query)
+            
+            # Execute the query
+            conn_result = session.execute(query)
+
+            # Extract results
+            result = [row[0] for row in conn_result]
+            return result
+
+    async def async_query_method(self, query: str, params: Dict):
+        """Helper method for running async queries."""
+        async with self.get_session() as session:
+            query_text=text(query).bindparams(**params) if params else text(query)
+            
+            result = await session.execute(query_text)
+            return [row[0] for row in result]
+
+    def _execute_query_sync(self, query: str, params: Dict[str, Any] = None) -> List[Any]:
+        """Execute a prepared query and return results synchronously."""
+        with self.get_session() as conn:
+            try:
+                # Prepare and execute the query
+                query=text(query).bindparams(**params) if params else text(query)
+                result = conn.execute(query)
         
-        with self.engine.connect() as connection:
-            inspector = inspect(connection)
-            return inspector.get_table_names()
+                return result.fetchall()
+            except ResourceClosedError:
+                return []
 
-    async def _list_tables_async(self):
-        """Lists tables in the database asynchronously."""
-        async with self.get_session() as connection:
-            inspector = inspect(connection)
-            return await connection.run_sync(inspector.get_table_names)
+    async def _execute_query_async(self, query: str, params: Dict[str, Any] = None) -> List[Any]:
+        """Execute a prepared query and return results asynchronously."""
+        async with self.get_session() as conn:
+            try:
+                # Prepare and execute the query
+                query=text(query).bindparams(**params) if params else text(query)
+                result = await conn.execute(query)
+                return await result.fetchall()
+            except ResourceClosedError:
+                    return []
+    
+    def create_tables(self):
+        """Creates tables based on SQLAlchemy models, synchronously or asynchronously."""
+        # Synchronous version
+        if not self.async_mode:
+            self.base.metadata.create_all(self.engine)
+            return
+
+        # Asynchronous version
+        async def create_tables_async():
+            async with self.engine.begin() as conn:
+                try:
+                    await conn.run_sync(self.base.metadata.create_all)
+                except Exception as e:
+                    self.logger.error(f"Async error creating tables: {e}")
+
+        # Run the asynchronous method if async_mode is True
+        run_async_method(create_tables_async)
+
+    # 1. List Tables
+    def list_tables(self, schema_name: str = 'public'):
+        sync_query = """
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = :schema_name;
+        """
+        async_handler=lambda params: self.async_query_method(sync_query, params)
+        return self.execute(sync_query, async_handler, {'schema_name': schema_name})
+
+    # 2. List Schemas
+    def list_schemas(self):
+        sync_query = "SELECT schema_name FROM information_schema.schemata;"
+        async_handler = lambda params: self.async_query_method(sync_query, params)
+        return self.execute(sync_query, async_handler)
+
+    # 3. List Indexes
+    def list_indexes(self, table_name: str):
+        sync_query = """
+            SELECT indexname 
+            FROM pg_indexes 
+            WHERE tablename = :table_name;
+        """
+        async_handler=lambda params: self.async_query_method(sync_query, params)
+        return self.execute(sync_query, async_handler, {'table_name': table_name})
+
+    # 4. List Views
+    def list_views(self, schema_name='public'):
+        sync_query = """
+            SELECT table_name 
+            FROM information_schema.views 
+            WHERE table_schema = :schema_name;
+        """
+        async_handler=lambda params: self.async_query_method(sync_query, params)
+        return self.execute(sync_query, async_handler, {'schema_name': schema_name})
+
+    # 5. List Sequences
+    def list_sequences(self):
+        sync_query = "SELECT sequence_name FROM information_schema.sequences;"
+        async_handler = lambda params: self.async_query_method(sync_query, params)
+        return self.execute(sync_query, async_handler)
+
+    # 6. List Constraints
+    def list_constraints(self, table_name: str):
+        sync_query = """
+            SELECT conname 
+            FROM pg_constraint 
+            WHERE conrelid = (
+                SELECT oid FROM pg_class WHERE relname = :table_name
+            );
+        """
+        async_handler = lambda params: self.async_query_method(sync_query, params)
+        return self.execute(sync_query, async_handler, {'table_name': table_name})
+
+    # 7. List Triggers
+    def list_triggers(self, table_name: str):
+        sync_query = """
+            SELECT trigger_name 
+            FROM information_schema.triggers 
+            WHERE event_object_table = :table_name;
+        """
+        async_handler = lambda params: self.async_query_method(sync_query, params)
+        return self.execute(sync_query, async_handler, {'table_name': table_name})
+
+    # 8. List Functions
+    def list_functions(self):
+        sync_query = """
+            SELECT routine_name FROM information_schema.routines WHERE routine_type = 'FUNCTION';
+        """
+        async_handler = lambda params: self.async_query_method(sync_query, params)
+        return self.execute(sync_query, async_handler)
+
+    # 9. List Procedures
+    def list_procedures(self):
+        sync_query = """
+            SELECT routine_name 
+            FROM information_schema.routines 
+            WHERE routine_type = 'PROCEDURE';
+        """
+        async_handler = lambda params: self.async_query_method(sync_query, params)
+        return self.execute(sync_query, async_handler)
+
+    # 10. List Materialized Views
+    def list_materialized_views(self):
+        sync_query = """
+            SELECT matviewname 
+            FROM pg_matviews;
+        """
+        async_handler = lambda params: self.async_query_method(sync_query, params)
+        return self.execute(sync_query, async_handler)
+
+    # 11. List Columns
+    def list_columns(self, table_name: str, schema_name: str = 'public'):
+        sync_query = """
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE 
+                table_schema = :schema_name and
+                table_name = :table_name;
+        """
+        async_handler = lambda params: self.async_query_method(sync_query, params)
+        return self.execute(
+            sync_query, async_handler, 
+            {
+                'schema_name': schema_name,
+                'table_name': table_name
+            }
+        )
+
+    # 12. List User-Defined Types
+    def list_types(self):
+        sync_query = """
+            SELECT typname 
+            FROM pg_type 
+            WHERE typtype = 'e';  -- Only enumerated types
+        """
+        async_handler = lambda params: self.async_query_method(sync_query, params)
+        return self.execute(sync_query, async_handler)
+
+    # 13. List Roles
+    def list_roles(self):
+        sync_query = "SELECT rolname FROM pg_roles;"
+        async_handler = lambda params: self.async_query_method(sync_query, params)
+        return self.execute(sync_query, async_handler)
+
+    # 14. List Extensions
+    def list_extensions(self) -> list:
+        """Lists extensions installed in the database."""
+        sync_query = "SELECT extname FROM pg_extension;"
+        async_handler = lambda params: self.async_query_method(sync_query, params)
+        return self.execute(sync_query, async_handler)
     
     def _drop_tables_sync(self):
         """Drops all tables in the database synchronously."""
@@ -347,9 +509,9 @@ class Database:
     def drop_tables(self):
         """Unified method to drop tables synchronously or asynchronously."""
         if self.async_mode:
-            run_async_method(self._drop_tables_async())
+            run_async_method(self._drop_tables_async)  # Pass the function reference
         else:
-            self._drop_tables_sync() 
+            self._drop_tables_sync()
 
     async def add_audit_trigger(self, audit_table_name: str, table_name: str):
         """Add an audit trigger to the specified table."""
@@ -403,57 +565,43 @@ class Database:
         pattern = r"^[a-zA-Z_][a-zA-Z0-9_]*$"
         return match(pattern, table_name) is not None
 
-    async def _disconnect_async(self):
-        """Asynchronously cleans up and closes the database connections."""
-        await self.engine.dispose()
 
     def disconnect(self, async_mode: bool = None):
         """Cleans up and closes the database connections, synchronous or asynchronously."""
-        if self.async_mode:
-            run_async_method(self._disconnect_async())
-        else:
-            self.engine.dispose()
-
-    def _execute_query_sync(self, query: str, params: Dict[str, Any] = None) -> List[Any]:
-        """Execute a prepared query and return results synchronously."""
-        with self.engine.begin() as conn:    
-            try:
-                # Prepare and execute the query
-                result = conn.execute(text(query).bindparams(**params) if params else text(query))
+        async def _disconnect_async():
+            """Asynchronously cleans up and closes the database connections."""
+            await self.engine.dispose()
         
-                return result.fetchall() if self.async_mode else result.fetchall()
-            except ResourceClosedError:
-                return []
-
-    async def _execute_query_async(self, query: str, params: Dict[str, Any] = None) -> List[Any]:
-        """Execute a prepared query and return results asynchronously."""
-        async with self.engine.begin() as conn:
-            try:
-                # Prepare and execute the query
-                result = await conn.execute(text(query).bindparams(**params) if params else text(query))
-                return await result.fetchall()
-            except ResourceClosedError:
-                    return []
+        if self.async_mode:
+            run_async_method(_disconnect_async)
+        
+        self.engine.dispose()
 
     def query(self, query: str, params: Dict[str, Any] = None) -> List[Any]:
         """Unified method to execute queries synchronously or asynchronously."""
         # Lazy initialization: configure parallel queries if not already done
         if self.async_mode:
             return run_async_method(self._execute_query_async, query, params)
-        else:
-            return self._execute_query_sync(query, params)
+        
+        return self._execute_query_sync(query, params)
     
-    async def paginate(
-        self, query: str, params: dict = None, batch_size: int = 100
-    ) -> AsyncGenerator[List[Any], None]:
+    def paginate(
+        self, 
+        query: str, 
+        params: dict = None, 
+        batch_size: int = PAGINATION_BATCH_SIZE
+    ) -> Generator[List[Any], None, None]:
         """Unified paginate interface for synchronous and asynchronous queries."""
         paginator = Paginator(query, params, batch_size)
 
         if self.async_mode:
-            async for page in paginator._async_paginated_query(self):
+            # Convert async pagination to sync using run_async_method
+            async_pages = run_async_method(paginator._async_paginated_query)
+            for page in async_pages:
                 yield page
         else:
-            for page in paginator._sync_paginated_query(self):
+            # Iterate over the synchronous pagination
+            for page in paginator._sync_paginated_query():
                 yield page
     
     def __repr__(self):
@@ -507,9 +655,6 @@ class MultiDatabase:
         for db in self.databases.values():
             db.disconnect()
 
-    def __repr__(self):
-        return f"<MultiDatabase(databases={list(self.databases.keys())})>"
-
     async def __aenter__(self):
         try:
             yield self
@@ -521,3 +666,6 @@ class MultiDatabase:
             yield self
         finally:
             self.disconnect_all()
+
+    def __repr__(self):
+        return f"<MultiDatabase(databases={list(self.databases.keys())})>"

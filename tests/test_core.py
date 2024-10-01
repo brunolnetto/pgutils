@@ -29,11 +29,122 @@ def test_invalid_pool_size():
             db_name="mydatabase"
         )
 
-def test_mask_sensitive_data(sync_settings: DatabaseSettings):
-    db = Database(sync_settings)
-    masked_uri = db.mask_sensitive_data()
+def test_mask_sensitive_data(sync_database: Database):
+    masked_uri = sync_database.mask_sensitive_data()
     assert "***" in masked_uri, "Sensitive data should be masked."
+    
+def test_repr(sync_database: Database):
+    database_repr = str(sync_database)
+    assert "***" in database_repr, "Sensitive data should be masked."
+    assert f"async_mode={str(sync_database.async_mode)}" in database_repr, "Async mode must be present"
 
+def test_paginate(sync_database: Database):
+    with sync_database.get_session() as session:
+        # Fetch and assert paginated results in batches
+        expected_batches = [
+            [(1, 'Alice'), (2, 'Bob')],
+            [(3, 'Charlie'), (4, 'David')]
+        ]
+
+        results = []
+        
+        for batch in sync_database.paginate(
+            session, "SELECT * FROM public.test_table", batch_size = 2
+        ):
+            results.append(batch)
+
+        # Assertion to verify the result
+        assert len(results) == 2
+
+def test_query(sync_database: Database):
+    results = sync_database.query( "SELECT * FROM public.test_table")
+
+    # Assertion to verify the result
+    assert len(results) == 4
+    
+def test_list_tables(sync_database: Database):
+    results = sync_database.list_tables()
+    
+    # Assertion to verify the result
+    assert results == ['public']
+
+def test_list_columns(sync_database: Database):
+    results = sync_database.list_columns('test_table')
+    
+    # Assertion to verify the result
+    assert results == ['id', 'name']
+    
+def test_list_schemas(sync_database: Database):
+    results = sync_database.list_schemas()
+    
+    # Assertion to verify the result
+    assert results == ['pg_toast', 'pg_catalog', 'public', 'information_schema']
+
+def test_list_indexes(sync_database: Database):
+    results = sync_database.list_indexes('test_table')
+    
+    # Assertion to verify the result
+    assert results == []
+
+def test_list_views(sync_database: Database):
+    results = sync_database.list_views()
+
+    # Assertion to verify the result
+    assert results == []
+
+def test_list_sequences(sync_database: Database):
+    results = sync_database.list_sequences()
+
+    # Assertion to verify the result
+    assert results == []
+
+def test_list_constraints(sync_database: Database):
+    results = sync_database.list_constraints('test_table')
+
+    # Assertion to verify the result
+    assert results == ['test_table_pkey']
+
+def test_list_triggers(sync_database: Database):
+    results = sync_database.list_triggers('test_table')
+
+    # Assertion to verify the result
+    assert results == []
+
+def test_list_functions(sync_database: Database):
+    results = sync_database.list_functions()
+
+    # Assertion to verify the result
+    assert len(results) > 0
+
+def test_list_procedures(sync_database: Database):
+    results = sync_database.list_procedures()
+
+    # Assertion to verify the result
+    assert results == []
+
+def test_list_materialized_views(sync_database: Database):
+    results = sync_database.list_materialized_views()
+
+    # Assertion to verify the result
+    assert results == []
+
+def test_list_types(sync_database: Database):
+    results = sync_database.list_types()
+
+    # Assertion to verify the result
+    assert results == []
+
+def test_list_roles(sync_database: Database):
+    results = sync_database.list_roles()
+
+    # Assertion to verify the result
+    assert len(results) > 0
+
+def test_list_extensions(sync_database: Database):
+    results = sync_database.list_extensions()
+
+    # Assertion to verify the result
+    assert len(results) == 1
 
 def test_list_tables(sync_database: Database):
     # Define your table model using the Database's Base
