@@ -14,7 +14,10 @@ from pgutils.constants import (
     DEFAULT_ADMIN_USERNAME,
     DEFAULT_ADMIN_PASSWORD,
 )
-from .conftest import ASYNC_DB_URL
+from pgutils.testing import populate_database
+from .conftest import (
+    SYNC_DB_URL, DB_NAME,
+)
 
 def test_database_config_valid():
     config = DatabaseSettings(
@@ -217,14 +220,14 @@ async def test_async_paginator(async_session_factory):
     async for async_session in async_session_factory:
         paginator = Paginator(
             async_session, 
-            "SELECT * FROM public.test_table",
+            "SELECT name FROM public.test_table",
             batch_size=2
         )
 
         # Fetch and assert paginated results in batches
         expected_batches = [
-            [(1, 'Alice'), (2, 'Bob')],
-            [(3, 'Charlie'), (4, 'David')]
+            [('Alice', ), ('Bob', )],
+            [('Charlie', ), ('David', )]
         ]
 
         results = []
@@ -266,14 +269,14 @@ def test_paginator(sync_session_factory):
     session = sync_session_factory()
     paginator = Paginator(
         session, 
-        "SELECT * FROM public.test_table",
+        "SELECT name FROM public.test_table",
         batch_size=2
     )
 
     # Fetch and assert paginated results in batches
     expected_batches = [
-        [(1, 'Alice'), (2, 'Bob')],
-        [(3, 'Charlie'), (4, 'David')]
+        [('Alice', ), ('Bob', )],
+        [('Charlie', ), ('David', )]
     ]
 
     results = []
@@ -292,7 +295,7 @@ def test_paginator_with_params(sync_session_factory):
     session = sync_session_factory()
     paginator = Paginator(
         session, 
-        "SELECT * FROM public.test_table WHERE name LIKE :name", 
+        "SELECT name FROM public.test_table WHERE name LIKE :name", 
         params={'name': 'A%'}
     )
 
@@ -302,14 +305,14 @@ def test_paginator_with_params(sync_session_factory):
         results.extend(batch)
 
     assert len(results) == 1  # Only 'Alice' matches the condition
-    assert results[0] == (1, 'Alice')
+    assert results[0] == ('Alice', )
 
 @pytest.mark.asyncio
 async def test_sync_paginator_batches(sync_session_factory):
     session = sync_session_factory()
     paginator = Paginator(
         conn=session,
-        query="SELECT * FROM public.test_table",
+        query="SELECT name FROM public.test_table",
         batch_size=2
     )
 
@@ -318,8 +321,8 @@ async def test_sync_paginator_batches(sync_session_factory):
         batches.append(batch)
 
     assert len(batches) == 2  # Should have 2 batches of 2 records
-    assert batches[0] == [(1, 'Alice'), (2, 'Bob')]
-    assert batches[1] == [(3, 'Charlie'), (4, 'David')]
+    assert batches[0] == [('Alice', ), ('Bob', )]
+    assert batches[1] == [('Charlie', ), ('David', )]
 
 def test_get_total_count(sync_session_factory):
     session=sync_session_factory()
@@ -334,7 +337,7 @@ def test_get_total_count(sync_session_factory):
     assert paginator._get_total_count() == 4
 
 @pytest.mark.asyncio
-async def test_sync_paginator_after_deleting_all_entries(sync_session_factory):
+async def test_sync_paginator_after_deleting_all_entries(sync_db_engine, sync_session_factory):
     sync_session: Session = sync_session_factory()
     
     # Step 1: Delete all entries from the table
@@ -345,13 +348,15 @@ async def test_sync_paginator_after_deleting_all_entries(sync_session_factory):
     # Step 2: Prepare the paginator after deletion
     paginator = Paginator(
         conn=sync_session,
-        query="SELECT * FROM test_table",
+        query="SELECT name FROM test_table",
         batch_size=2
     )
 
     # Step 3: Request the paginator to yield the pages (should yield nothing after deletion)
     for page in paginator.paginate():
         assert len(page) == 0  # Since we deleted all rows, the page should be empty
+
+    populate_database(SYNC_DB_URL, DB_NAME)
 
 def test_get_batch_query(sync_session_factory):
     session=sync_session_factory()
