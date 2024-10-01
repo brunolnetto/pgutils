@@ -59,6 +59,50 @@ def test_create_index_statement(sync_database: Database):
     index_query=f"CREATE INDEX IF NOT EXISTS test_table_name_idx ON test_table USING btree (name);"
     assert str(sync_database._create_index_statement('test_table', 'name', 'btree')) == index_query
 
+
 def test_multi_database_health_check(multidatabase: MultiDatabase):
     health_checks = multidatabase.health_check_all()
     assert all(health_checks.values()), "Health check for all databases should pass."
+
+
+def test_list_tables_sync(sync_database: Database):
+    assert sync_database.list_tables() == ['test_table']
+
+
+def test_list_tables_async(async_database: Database):
+    tables = async_database.list_tables()
+    
+    assert tables == ['test_table']
+
+def test_list_schemas_sync(sync_database: Database):
+    schemas = sync_database.list_schemas()
+    assert schemas == {'information_schema', 'public'}
+
+
+def test_list_schemas_async(async_database: Database):
+    tables = async_database.list_schemas()
+    
+    assert tables == {'pg_toast', 'pg_catalog', 'public', 'information_schema'}
+
+
+def test_list_triggers_sync(sync_database: Database):
+    triggers = sync_database.list_triggers('test_table')
+
+    assert triggers == []
+
+
+def test_list_triggers_async(async_database: Database):
+    triggers = async_database.list_triggers('test_table')
+
+    assert triggers == []
+
+def test_list_indexes_sync(sync_database: Database):
+    indexes = sync_database.list_indexes('test_table')
+
+    assert indexes == []
+
+
+def test_list_indexes_async(async_database: Database):
+    indexes = async_database.list_indexes('test_table')
+
+    assert indexes == []
