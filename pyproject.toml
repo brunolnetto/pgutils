@@ -17,6 +17,7 @@ psycopg-binary = "^3.2.2"
 psycopg2-binary = "^2.9.9"
 psycopg = "^3.2.2"
 sqlalchemy = {extras = ["asyncio"], version = "^2.0.35"}
+pytest-mock = "^3.14.0"
 
 [tool.poetry.dev-dependencies]
 
