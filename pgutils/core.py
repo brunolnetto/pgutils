@@ -4,7 +4,7 @@ from logging import getLogger, Logger
 from re import match
 import asyncio
 
-from pydantic import ValidationError
+from pydantic import ValidationError, TypeAdapter
 from sqlalchemy import DDL
 from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.engine.url import make_url
@@ -17,7 +17,7 @@ from sqlalchemy.exc import (
     SQLAlchemyError
 )
 
-from .models import DatabaseSettings, Index, Paginator 
+from .models import DatabaseSettings, TableConstraint, ColumnIndex, Paginator
 from .utils import run_async_method
 from .constants import PAGINATION_BATCH_SIZE
 
@@ -161,7 +161,7 @@ class Database:
         else:
             return self.check_columns_exist_sync(table_name, columns)
 
-    async def create_indexes(self, indexes: Dict[str, Index]):
+    async def create_indexes(self, indexes: Dict[str, ColumnIndex]):
         """Creates indexes based on the provided configuration."""
         if not indexes:
             self.logger.warning("No indexes provided for creation.")
@@ -305,15 +305,22 @@ class Database:
         if self.async_mode:
             return run_async_method(async_query, params)
 
-        with self.engine.connect() as session:
+        with self.get_session() as session:
             # Prepare the query with bound parameters
             query = text(sync_query).bindparams(**params) if params else text(sync_query)
-            
+            compiled_query=query.compile(compile_kwargs={"literal_binds": True})
+
+            session.expire_all()
+            conn_result = session.execute(
+                text("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';")
+            )
+
             # Execute the query
             conn_result = session.execute(query)
-
+            rows = conn_result.fetchall()
+            
             # Extract results
-            result = [row[0] for row in conn_result]
+            result = [row[0] for row in rows]
             return result
 
     async def async_query_method(self, query: str, params: Dict):
@@ -366,14 +373,14 @@ class Database:
         run_async_method(create_tables_async)
 
     # 1. List Tables
-    def list_tables(self, schema_name: str = 'public'):
+    def list_tables(self, table_schema: str = 'public'):
         sync_query = """
             SELECT table_name 
             FROM information_schema.tables 
-            WHERE table_schema = :schema_name;
+            WHERE table_schema = :table_schema;
         """
         async_handler=lambda params: self.async_query_method(sync_query, params)
-        return self.execute(sync_query, async_handler, {'schema_name': schema_name})
+        return self.execute(sync_query, async_handler, {'table_schema': table_schema})
 
     # 2. List Schemas
     def list_schemas(self):
@@ -388,18 +395,20 @@ class Database:
             FROM pg_indexes 
             WHERE tablename = :table_name;
         """
+        query_params={'table_name': table_name}
         async_handler=lambda params: self.async_query_method(sync_query, params)
-        return self.execute(sync_query, async_handler, {'table_name': table_name})
+        return self.execute(sync_query, async_handler, query_params)
 
     # 4. List Views
-    def list_views(self, schema_name='public'):
+    def list_views(self, table_schema='public'):
         sync_query = """
             SELECT table_name 
             FROM information_schema.views 
-            WHERE table_schema = :schema_name;
+            WHERE table_schema = :table_schema;
         """
+        query_params={'table_schema': table_schema}
         async_handler=lambda params: self.async_query_method(sync_query, params)
-        return self.execute(sync_query, async_handler, {'schema_name': schema_name})
+        return self.execute(sync_query, async_handler, query_params)
 
     # 5. List Sequences
     def list_sequences(self):
@@ -408,17 +417,43 @@ class Database:
         return self.execute(sync_query, async_handler)
 
     # 6. List Constraints
-    def list_constraints(self, table_name: str):
+    def list_constraints(self, table_name: str, table_schema: str = 'public') -> List[TableConstraint]:
         sync_query = """
-            SELECT conname 
-            FROM pg_constraint 
-            WHERE conrelid = (
-                SELECT oid FROM pg_class WHERE relname = :table_name
-            );
+            SELECT
+                tc.constraint_name,
+                tc.constraint_type,
+                tc.table_name,
+                kcu.column_name,
+                ccu.table_name AS foreign_table_name,
+                ccu.column_name AS foreign_column_name
+            FROM
+                information_schema.table_constraints AS tc
+            JOIN information_schema.key_column_usage AS kcu
+                ON tc.constraint_name = kcu.constraint_name
+                AND tc.table_schema = kcu.table_schema
+            LEFT JOIN information_schema.constraint_column_usage AS ccu
+                ON tc.constraint_name = ccu.constraint_name
+                AND tc.table_schema = ccu.table_schema
+            WHERE tc.table_name = :table_name
+                AND tc.table_schema = :table_schema;
         """
+        query_params={
+            'table_schema': table_schema,
+            'table_name': table_name
+        }
         async_handler = lambda params: self.async_query_method(sync_query, params)
-        return self.execute(sync_query, async_handler, {'table_name': table_name})
+        rows = self.execute(sync_query, async_handler, query_params)
+        
 
+        # Convert SQLAlchemy rows to a list of dictionaries
+        records = [dict(row) for row in rows]
+
+        # Use TypeAdapter to validate and convert the list of dictionaries to Pydantic models
+        adapter = TypeAdapter(List[TableConstraint])
+        constraints = adapter.validate_python(records)
+        
+        return constraints
+        
     # 7. List Triggers
     def list_triggers(self, table_name: str):
         sync_query = """
@@ -426,8 +461,9 @@ class Database:
             FROM information_schema.triggers 
             WHERE event_object_table = :table_name;
         """
+        query_params={'table_name': table_name}
         async_handler = lambda params: self.async_query_method(sync_query, params)
-        return self.execute(sync_query, async_handler, {'table_name': table_name})
+        return self.execute(sync_query, async_handler, query_params)
 
     # 8. List Functions
     def list_functions(self):
@@ -457,22 +493,21 @@ class Database:
         return self.execute(sync_query, async_handler)
 
     # 11. List Columns
-    def list_columns(self, table_name: str, schema_name: str = 'public'):
+    def list_columns(self, table_name: str, table_schema: str = 'public'):
         sync_query = """
             SELECT column_name 
             FROM information_schema.columns 
             WHERE 
-                table_schema = :schema_name and
+                table_schema = :table_schema and
                 table_name = :table_name;
         """
+        query_params={
+            'table_schema': table_schema,
+            'table_name': table_name
+        }
         async_handler = lambda params: self.async_query_method(sync_query, params)
         return self.execute(
-            sync_query, async_handler, 
-            {
-                'schema_name': schema_name,
-                'table_name': table_name
-            }
-        )
+            sync_query, async_handler, query_params)
 
     # 12. List User-Defined Types
     def list_types(self):

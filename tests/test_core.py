@@ -47,17 +47,16 @@ def test_paginate(sync_database: Database):
         ]
 
         results = []
-        
-        for batch in sync_database.paginate(
-            session, "SELECT * FROM public.test_table", batch_size = 2
-        ):
+
+        query_str="SELECT * FROM test_table"
+        for batch in sync_database.paginate(session, query_str, batch_size = 2):
             results.append(batch)
 
         # Assertion to verify the result
         assert len(results) == 2
 
 def test_query(sync_database: Database):
-    results = sync_database.query( "SELECT * FROM public.test_table")
+    results = sync_database.query( "SELECT * FROM test_table")
 
     # Assertion to verify the result
     assert len(results) == 4
@@ -87,7 +86,7 @@ def test_list_indexes(sync_database: Database):
     assert results == []
 
 def test_list_views(sync_database: Database):
-    results = sync_database.list_views()
+    results = sync_database.list_views('public')
 
     # Assertion to verify the result
     assert results == []

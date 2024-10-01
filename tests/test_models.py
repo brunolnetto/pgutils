@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, AsyncSessi
 
 
 # Assuming the following imports based on your original code
-from pgutils.models import DatabaseSettings, Index, Paginator
+from pgutils.models import DatabaseSettings, ColumnIndex, Paginator
 from pgutils.constants import (
     DEFAULT_ADMIN_USERNAME,
     DEFAULT_ADMIN_PASSWORD,
@@ -68,7 +68,7 @@ def test_database_config_invalid_pool_size():
 
 
 def test_valid_index_btree():
-    index = Index(
+    index = ColumnIndex(
         table_name='my_table', type='btree', columns=['column1', 'column2']
     )
     assert index.type == 'btree'
@@ -78,7 +78,7 @@ def test_valid_index_btree():
 
 def test_invalid_index_btree_duplicate_indexes():
     with pytest.raises(ValidationError) as excinfo:
-        Index(
+        ColumnIndex(
             table_name='my_table', 
             type='btree', 
             columns=['column1', 'column1']
@@ -88,7 +88,7 @@ def test_invalid_index_btree_duplicate_indexes():
 
 
 def test_valid_index_expression():
-    index = Index(
+    index = ColumnIndex(
         table_name='my_table', 
         type='expression', 
         columns=['column1', 'column2'], 
@@ -99,7 +99,7 @@ def test_valid_index_expression():
     assert index.expression == 'column1 + column2'
 
 def test_valid_index_partial():
-    index = Index(
+    index = ColumnIndex(
         table_name='my_table', 
         type='partial', 
         columns=['column1'], 
@@ -111,12 +111,12 @@ def test_valid_index_partial():
 
 def test_invalid_index_type():
     with pytest.raises(ValidationError) as exc_info:
-        Index(type='invalid_type', columns=['column1'])
+        ColumnIndex(type='invalid_type', columns=['column1'])
     assert "Index type must be one of" in str(exc_info.value)
 
 def test_columns_must_be_list():
     with pytest.raises(ValidationError) as exc_info:
-        Index(
+        ColumnIndex(
             table_name='my_table', 
             type='btree', 
             columns='not_a_list'
@@ -126,7 +126,7 @@ def test_columns_must_be_list():
 
 def test_expression_required_for_expression_index():
     with pytest.raises(ValidationError) as exc_info:
-        Index(
+        ColumnIndex(
             table_name='my_table', 
             type='expression', 
             columns=['column1']
@@ -136,7 +136,7 @@ def test_expression_required_for_expression_index():
 
 def test_condition_required_for_partial_index():
     with pytest.raises(ValidationError) as exc_info:
-        Index(
+        ColumnIndex(
             table_name='my_table', 
             type='partial', 
             columns=['column1']

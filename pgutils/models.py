@@ -4,6 +4,7 @@ from typing import (
     Union, Optional
 )
 from typing_extensions import Self
+from pydantic import BaseModel
 import re
 
 from pydantic import (
@@ -36,7 +37,7 @@ from .constants import (
 )
 
 
-class Index(BaseModel):
+class ColumnIndex(BaseModel):
     type: str
     table_name: str
     columns: List[str]
@@ -130,6 +131,15 @@ class DatabaseSettings(BaseModel):
         
         return value
 
+
+class TableConstraint(BaseModel):
+    constraint_name: str
+    constraint_type: str
+    table_name: str
+    column_name: Optional[str]
+    foreign_table_name: Optional[str]
+    foreign_column_name: Optional[str]
+    
 
 class Paginator:
     def __init__(
