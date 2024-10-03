@@ -114,7 +114,7 @@ venv.bak/
 .spyderproject
 .spyproject
 
-*/conftest.py
+tests/conftest.py
 
 # Rope project settings
 .ropeproject
