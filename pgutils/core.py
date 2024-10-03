@@ -1,5 +1,6 @@
 from contextlib import contextmanager, asynccontextmanager
-from typing import Union, List, Any, Generator, AsyncGenerator, Dict
+from typing import Union, List, Any, Generator, AsyncGenerator, Dict, Optional
+
 from logging import getLogger, Logger 
 from re import match
 import asyncio
@@ -133,7 +134,7 @@ class Database:
             except (OperationalError, ProgrammingError) as e:
                 self.logger.error(f"Error while dropping database '{db_name}': {e}")
 
-    async def check_columns_exist_async(self, table_name: str, columns: List[str]) -> List[str]:
+    async def _check_columns_exist_async(self, table_name: str, columns: List[str]) -> List[str]:
         """Check if the specified columns exist in the table asynchronously."""
         async with self.get_session() as session:
             query=text(
@@ -149,7 +150,7 @@ class Database:
             missing_columns = [col for col in columns if col not in actual_columns]
             return missing_columns
 
-    def check_columns_exist_sync(self, table_name: str, columns: List[str]) -> List[str]:
+    def _check_columns_exist_sync(self, table_name: str, columns: List[str]) -> List[str]:
         """Check if the specified columns exist in the table synchronously."""
         inspector = inspect(self.engine)
         actual_columns = {column['name'] for column in inspector.get_columns(table_name)}
@@ -159,9 +160,16 @@ class Database:
     def check_columns_exist(self, table_name: str, columns: List[str]) -> List[str]:
         """Check if the specified columns exist in the table, supporting both async and sync modes."""
         if self.async_mode:
-            return run_async_method(self.check_columns_exist_async, table_name, columns)
+            return run_async_method(self._check_columns_exist_async, table_name, columns)
         else:
-            return self.check_columns_exist_sync(table_name, columns)
+            return self._check_columns_exist_sync(table_name, columns)
+
+    def _create_index_statement(self, table_name: str, column_name: str, index_type: str) -> DDL:
+        """Generate the DDL statement for creating an index."""
+        return DDL(
+            f"CREATE INDEX IF NOT EXISTS {table_name}_{column_name}_idx "
+            f"ON {table_name} USING {index_type} ({column_name});"
+        )
 
     async def create_indexes(self, indexes: Dict[str, ColumnIndex]):
         """Creates indexes based on the provided configuration."""
@@ -192,12 +200,6 @@ class Database:
                 index_stmt = await self._create_index_statement(table_name, columns, index_type)
                 await self._execute_index_creation(session, index_stmt, table_name)
 
-    def _create_index_statement(self, table_name: str, column_name: str, index_type: str) -> DDL:
-        """Generate the DDL statement for creating an index."""
-        return DDL(
-            f"CREATE INDEX IF NOT EXISTS {table_name}_{column_name}_idx "
-            f"ON {table_name} USING {index_type} ({column_name});"
-        )
 
     def _index_exists(self, session: AsyncSession, table_name: str, index_name: str) -> bool:
         """Check if the index exists in the specified table."""
@@ -239,16 +241,10 @@ class Database:
 
     def get_session(self) -> Union[asynccontextmanager, contextmanager]:
         """Unified session manager for synchronous and asynchronous operations."""
-        if self.async_mode:
-            return self._get_async_session()
-        else:
-            return self._get_sync_session()
+        return self._get_async_session() if self.async_mode else self._get_sync_session()
 
     def mask_sensitive_data(self) -> str:
-        """Masks sensitive data (e.g., password) in the database URI."""
-        masked_url = self.uri.set(password="******")
-        if self.uri.username:
-            masked_url = masked_url.set(username="******")
+        masked_url = self.uri._replace(password="******", username="******")
         return str(masked_url)
 
     def _health_check_sync(self):
@@ -351,7 +347,12 @@ class Database:
                 return await result.fetchall()
             except ResourceClosedError:
                     return []
-    
+
+    def _execute_list_query(self, query: str, params: dict = None):
+        """Execute a list query and return results synchronously or asynchronously."""
+        async_handler = lambda p: self.async_query_method(query, p)
+        return self.execute(query, async_handler, params)
+
     def create_tables(self):
         """Creates tables based on SQLAlchemy models, synchronously or asynchronously."""
         # Synchronous version
@@ -377,19 +378,12 @@ class Database:
             FROM information_schema.tables 
             WHERE table_schema = :table_schema;
         """
-        async_handler=lambda params: self.async_query_method(sync_query, params)
-        table_tuples = self.execute(sync_query, async_handler, {'table_schema': table_schema})
-        print(table_tuples)
-        return table_tuples
+        return self._execute_list_query(sync_query, {'table_schema': table_schema})
 
     # 2. List Schemas
     def list_schemas(self):
         sync_query = "SELECT schema_name FROM information_schema.schemata;"
-        async_handler = lambda params: self.async_query_method(sync_query, params)
-        
-        schema_tuples = self.execute(sync_query, async_handler)
-
-        return schema_tuples
+        return self._execute_list_query(sync_query)
 
     # 3. List Indexes
     def list_indexes(self, table_name: str):
@@ -398,12 +392,7 @@ class Database:
             FROM pg_indexes 
             WHERE tablename = :table_name;
         """
-        query_params={'table_name': table_name}
-        async_handler=lambda params: self.async_query_method(sync_query, params)
-
-        index_tuples = self.execute(sync_query, async_handler, query_params)
-
-        return index_tuples
+        return self._execute_list_query(sync_query, {'table_name': table_name})
 
     # 4. List Views
     def list_views(self, table_schema='public'):
@@ -412,20 +401,12 @@ class Database:
             FROM information_schema.views 
             WHERE table_schema = :table_schema;
         """
-        query_params={'table_schema': table_schema}
-        async_handler=lambda params: self.async_query_method(sync_query, params)
-        view_tuples = self.execute(sync_query, async_handler, query_params)
-        
-        return view_tuples
+        return self._execute_list_query(sync_query, {'table_schema': table_schema})
 
     # 5. List Sequences
     def list_sequences(self):
         sync_query = "SELECT sequence_name FROM information_schema.sequences;"
-        async_handler = lambda params: self.async_query_method(sync_query, params)
-        
-        sequence_tuples = self.execute(sync_query, async_handler)
-        
-        return sequence_tuples
+        return self._execute_list_query(sync_query)
 
     # 6. List Constraints
     def list_constraints(self, table_name: str, table_schema: str = 'public') -> List[TableConstraint]:
@@ -448,15 +429,11 @@ class Database:
             WHERE tc.table_name = :table_name
                 AND tc.table_schema = :table_schema;
         """
-        query_params={
+        return self._execute_list_query(sync_query, {
             'table_schema': table_schema,
             'table_name': table_name
-        }
-        async_handler = lambda params: self.async_query_method(sync_query, params)
-        constraints = self.execute(sync_query, async_handler, query_params)
+        })
 
-        return constraints
-        
     # 7. List Triggers
     def list_triggers(self, table_name: str):
         sync_query = """
@@ -464,23 +441,15 @@ class Database:
             FROM information_schema.triggers 
             WHERE event_object_table = :table_name;
         """
-        query_params={'table_name': table_name}
-        async_handler = lambda params: self.async_query_method(sync_query, params)
-        
-        trigger_tuples = self.execute(sync_query, async_handler, query_params)
-        
-        return trigger_tuples
+        return self._execute_list_query(sync_query, {'table_name': table_name})
 
     # 8. List Functions
     def list_functions(self):
         sync_query = """
             SELECT routine_name FROM information_schema.routines WHERE routine_type = 'FUNCTION';
         """
-        async_handler = lambda params: self.async_query_method(sync_query, params)
-        
-        function_tuples = self.execute(sync_query, async_handler)
-        
-        return function_tuples 
+        return self._execute_list_query(sync_query)
+
 
     # 9. List Procedures
     def list_procedures(self):
@@ -489,8 +458,7 @@ class Database:
             FROM information_schema.routines 
             WHERE routine_type = 'PROCEDURE';
         """
-        async_handler = lambda params: self.async_query_method(sync_query, params)
-        return self.execute(sync_query, async_handler)
+        return self._execute_list_query(sync_query)
 
     # 10. List Materialized Views
     def list_materialized_views(self):
@@ -498,10 +466,7 @@ class Database:
             SELECT matviewname 
             FROM pg_matviews;
         """
-        async_handler = lambda params: self.async_query_method(sync_query, params)
-        materialized_views_tuples = self.execute(sync_query, async_handler)
-
-        return materialized_views_tuples
+        return self._execute_list_query(sync_query)
 
     # 11. List Columns
     def list_columns(self, table_name: str, table_schema: str = 'public'):
@@ -512,14 +477,10 @@ class Database:
                 table_schema = :table_schema and
                 table_name = :table_name;
         """
-        query_params={
+        return self._execute_list_query(sync_query, {
             'table_schema': table_schema,
             'table_name': table_name
-        }
-        async_handler = lambda params: self.async_query_method(sync_query, params)
-        column_tuples = self.execute(sync_query, async_handler, query_params)
-        
-        return column_tuples
+        })
 
     # 12. List User-Defined Types
     def list_types(self):
@@ -528,45 +489,44 @@ class Database:
             FROM pg_type 
             WHERE typtype = 'e';  -- Only enumerated types
         """
-        async_handler = lambda params: self.async_query_method(sync_query, params)
-        type_tuples = self.execute(sync_query, async_handler)
-
-        return type_tuples 
+        return self._execute_list_query(sync_query)
 
     # 13. List Roles
     def list_roles(self):
         sync_query = "SELECT rolname FROM pg_roles;"
-        async_handler = lambda params: self.async_query_method(sync_query, params)
-        
-        role_tuples = self.execute(sync_query, async_handler)
-        
-        return role_tuples
+        return self._execute_list_query(sync_query)
 
     # 14. List Extensions
     def list_extensions(self) -> list:
         """Lists extensions installed in the database."""
         sync_query = "SELECT extname FROM pg_extension;"
-        async_handler = lambda params: self.async_query_method(sync_query, params)
-        extension_tuples = self.execute(sync_query, async_handler)
-        
-        return extension_tuples
+        return self._execute_list_query(sync_query)
 
     def drop_tables(self):
         """Unified method to drop tables synchronously or asynchronously."""
+        
         def _drop_tables_sync():
             """Drops all tables in the database synchronously."""
-            self.base.metadata.drop_all(self.engine)
+            try:
+                self.base.metadata.drop_all(self.engine)
+                self.logger.info("Successfully dropped all tables synchronously.")
+            except Exception as e:
+                self.logger.error(f"Error dropping tables synchronously: {e}")
 
         async def _drop_tables_async():
             """Asynchronously drops all tables in the database."""
-            async with self.engine.begin() as conn:
-                await conn.run_sync(self.base.metadata.drop_all)
-        
+            try:
+                async with self.engine.begin() as conn:
+                    await conn.run_sync(self.base.metadata.drop_all)
+                    self.logger.info("Successfully dropped all tables asynchronously.")
+            except Exception as e:
+                self.logger.error(f"Error dropping tables asynchronously: {e}")
+
         if self.async_mode:
             run_async_method(_drop_tables_async)  # Pass the function reference
         else:
             _drop_tables_sync()
-
+            
     async def add_audit_trigger(self, audit_table_name: str, table_name: str):
         """Add an audit trigger to the specified table."""
         # Validate table names to prevent SQL injection
@@ -614,49 +574,59 @@ class Database:
 
     def _is_valid_table_name(self, table_name: str) -> bool:
         """Validate table name against SQL injection."""
-        # Check for valid table name using a regex pattern: 
-        #   Alphanumeric and underscore, starting with a letter or underscore
         pattern = r"^[a-zA-Z_][a-zA-Z0-9_]*$"
-        return match(pattern, table_name) is not None
+        is_valid = match(pattern, table_name) is not None
+        if not is_valid:
+            self.logger.warning(f"Invalid table name attempted: {table_name}")
+        return is_valid
 
-
-    def disconnect(self, async_mode: bool = None):
+    def disconnect(self):
         """Cleans up and closes the database connections, synchronous or asynchronously."""
-        async def _disconnect_async():
-            """Asynchronously cleans up and closes the database connections."""
-            await self.engine.dispose()
         
         if self.async_mode:
-            run_async_method(_disconnect_async)
-        
+            run_async_method(self._disconnect_async)
+        else:
+            self._disconnect_sync()
+
+    async def _disconnect_async(self):
+        """Asynchronously cleans up and closes the database connections."""
+        await self.engine.dispose()
+
+    def _disconnect_sync(self):
+        """Synchronously cleans up and closes the database connections."""
         self.engine.dispose()
 
-    def query(self, query: str, params: Dict[str, Any] = None) -> List[Any]:
+    def query(self, query: str, params: Optional[Dict[str, Any]] = None) -> List[Any]:
         """Unified method to execute queries synchronously or asynchronously."""
-        # Lazy initialization: configure parallel queries if not already done
-        if self.async_mode:
-            return run_async_method(self._execute_query_async, query, params)
-        
-        return self._execute_query_sync(query, params)
+        try:
+            if self.async_mode:
+                return run_async_method(self._execute_query_async, query, params)
+            
+            return self._execute_query_sync(query, params)
+        except Exception as e:
+            self.logger.error(f"Query execution failed: {e}")
+            return []
     
     def paginate(
         self, 
         query: str, 
-        params: dict = None, 
+        params: Optional[dict] = None, 
         batch_size: int = PAGINATION_BATCH_SIZE
     ) -> Generator[List[Any], None, None]:
         """Unified paginate interface for synchronous and asynchronous queries."""
         paginator = Paginator(query, params, batch_size)
 
-        if self.async_mode:
-            # Convert async pagination to sync using run_async_method
-            async_pages = run_async_method(paginator._async_paginated_query)
-            for page in async_pages:
-                yield page
-        else:
-            # Iterate over the synchronous pagination
-            for page in paginator._sync_paginated_query():
-                yield page
+        try:
+            if self.async_mode:
+                async_pages = run_async_method(paginator._async_paginated_query)
+                for page in async_pages:
+                    yield page
+            else:
+                for page in paginator._sync_paginated_query():
+                    yield page
+        except Exception as e:
+            self.logger.error(f"Pagination failed: {e}")
+            yield []  # Return an empty page in case of failure
     
     def __repr__(self):
         return f"<Database(uri={self.mask_sensitive_data()}, async_mode={self.async_mode})>"
@@ -664,58 +634,77 @@ class Database:
 
 class MultiDatabase:
     """
-    Class to manage multiple Database instances.
+    Manages multiple Database instances.
+
+    Args:
+        settings_dict (Dict[str, DatabaseSettings]): A dictionary containing database names and their settings.
+        logger (Optional[Logger]): Logger for logging information and errors. Defaults to a logger with the class name.
+
+    Attributes:
+        logger (Logger): Logger used for logging.
+        databases (Dict[str, Database]): Dictionary of initialized database instances.
     """
 
-    def __init__(
-        self, 
-        settings_dict: Dict[str, DatabaseSettings], 
-        logger: Logger = None
-    ):
+    def __init__(self, settings_dict: Dict[str, DatabaseSettings], logger: Optional[Logger] = None):
         self.logger = logger or getLogger(__name__)
 
         self.databases = {}
         for name, settings in settings_dict.items():
             try:
-                # Validate config
-                self.databases[name] = Database(settings, logger)
+                # Initialize and validate database instance
+                self.databases[name] = Database(settings, self.logger)
             except ValidationError as e:
                 self.logger.error(f"Invalid configuration for database '{name}': {e}")
 
     def get_database(self, name: str) -> Database:
-        """Get a specific database instance."""
-        return self.databases.get(name)
+        """Returns the database instance for the given name."""
+        if name not in self.databases:
+            raise KeyError(f"Database '{name}' not found.")
+        return self.databases[name]
 
-    def health_check_all(self) -> dict:
-        """Health check for all databases (sync and async)."""
+    def health_check_all(self) -> Dict[str, bool]:
+        """
+        Performs health checks on all databases.
+        
+        Returns:
+            A dictionary with database names as keys and the result of the health check (True/False) as values.
+        """
         results = {}
         for name, db in self.databases.items():
             self.logger.info(f"Starting health check for database '{name}'")
             try:
                 results[name] = db.health_check()
-                self.logger.info(f"Health check for database '{name}' succeeded: {results[name]}")
+                self.logger.info(f"Health check for database '{name}' succeeded.")
             except Exception as e:
                 self.logger.error(f"Health check failed for database '{name}': {e}")
                 results[name] = False
         return results
 
     def create_tables_all(self):
-        """Create tables for all databases (sync and async)."""
+        """Creates tables for all databases."""
         for db in self.databases.values():
             db.create_tables()
 
     def disconnect_all(self):
-        """Disconnect all databases (sync and async)."""
+        """Disconnects all databases."""
         for db in self.databases.values():
             db.disconnect()
 
-    async def __aenter__(self):
+    @asynccontextmanager
+    async def async_context(self):
+        """
+        Async context manager to manage connections and disconnections for async operations.
+        """
         try:
             yield self
         finally:
             await self.disconnect_all()
 
-    def __enter__(self):
+    @contextmanager
+    def sync_context(self):
+        """
+        Sync context manager to manage connections and disconnections for sync operations.
+        """
         try:
             yield self
         finally:

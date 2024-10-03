@@ -20,6 +20,11 @@ ADMIN_SYNC_URL=f"postgresql://postgres:postgres@localhost:{DEFAULT_PORT}/postgre
 SYNC_DB_URL = f"postgresql://postgres:postgres@localhost:{DEFAULT_PORT}/{DB_NAME}"
 ASYNC_DB_URL = f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}/{DB_NAME}"
 
+@pytest.fixture(scope="session", autouse=True)
+def cleanup_event_loop():
+    yield
+    loop = asyncio.get_event_loop()
+    loop.close()
 
 @pytest.fixture(scope="module")
 def multidatabase_settings():
@@ -63,14 +68,14 @@ def invalid_uri_config():
     }
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="function")
 def sync_database(multidatabase_settings):
     sync_settings=multidatabase_settings['sync']
     db = Database(sync_settings)
     yield db
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="function")
 def async_database(multidatabase_settings):
     async_settings=multidatabase_settings['async']
     db = Database(async_settings)

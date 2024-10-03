@@ -72,13 +72,13 @@ class ColumnIndex(BaseModel):
 
 
 class DatabaseSettings(BaseModel):
-    uri: AnyUrl  # Database URI for regular operations
-    admin_username: str = Field(default=DEFAULT_ADMIN_USERNAME, min_length=NOT_EMPTY_STR_COUNT) 
+    uri: AnyUrl
+    admin_username: str = Field(default=DEFAULT_ADMIN_USERNAME, min_length=NOT_EMPTY_STR_COUNT)
     admin_password: str = Field(default=DEFAULT_ADMIN_PASSWORD, min_length=DEFAULT_MINIMUM_PASSWORD_SIZE)
     default_port: int = 5432
     async_mode: bool = False
-    pool_size: int = Field(default=DEFAULT_POOL_SIZE, gt=0)  # Must be greater than 0
-    max_overflow: int = Field(default=DEFAULT_MAX_OVERFLOW, ge=0)  # Must be 0 or greater
+    pool_size: int = Field(default=DEFAULT_POOL_SIZE, gt=0)
+    max_overflow: int = Field(default=DEFAULT_MAX_OVERFLOW, ge=0)
 
     @property
     def db_name(self) -> str:
@@ -87,48 +87,35 @@ class DatabaseSettings(BaseModel):
 
     @property
     def admin_uri(self) -> AnyUrl:
-        """Constructs the admin URI using the username and password, falling back to defaults if missing."""
-        username = self.admin_username
-        password = self.admin_password
-        
-        admin_uri = f"postgresql+psycopg2://{username}:{password}@{self.uri.host}:{self.uri.port}"
-        # Validate the admin URI using shared validation logic
+        """Constructs the admin URI."""
+        admin_uri = f"postgresql+psycopg2://{self.admin_username}:{self.admin_password}@{self.uri.host}:{self.uri.port}"
         validate_postgresql_uri(admin_uri, allow_async=False)
         return make_url(admin_uri)
-
-    def construct_uri(
-        self, drivername: str, username: str, password: str, 
-        host: str,  port: int, database: str
-    ) -> AnyUrl:
-        """Constructs a PostgreSQL URI from the provided components."""
-        return make_url(f"{drivername}://{username}:{password}@{host}:{port}/{database}")
 
     @property
     def complete_uri(self) -> AnyUrl:
         """Builds the complete URI."""
         parsed_uri = make_url(str(self.uri))
-
         drivername = parsed_uri.drivername
         username = parsed_uri.username or self.admin_username
         password = parsed_uri.password or self.admin_password
         port = parsed_uri.port or self.default_port
 
         return self.construct_uri(
-            drivername, username, password, 
-            parsed_uri.host, port,  parsed_uri.database or ''
+            drivername, username, password,
+            parsed_uri.host, port, parsed_uri.database or ''
         )
 
+    def construct_uri(self, drivername: str, username: str, password: str, host: str, port: int, database: str) -> AnyUrl:
+        """Constructs a PostgreSQL URI from the provided components."""
+        return make_url(f"{drivername}://{username}:{password}@{host}:{port}/{database}")
+
     @field_validator('uri')
-    def validate_uri(cls, value: AnyUrl):
-        """Validates the URI format to assert PostgreSQL with psycopg or asyncpg."""
-        
-        # Check the scheme directly
+    def validate_uri(cls, value: AnyUrl) -> AnyUrl:
+        """Validates the URI format."""
         if value.scheme not in VALID_SCHEMES:
             raise ValueError(f"URI must start with {VALID_SCHEMES}.")
-
-        # Optionally, you can also check the full URI structure here.
-        validate_postgresql_uri(str(value), allow_async = True)
-        
+        validate_postgresql_uri(str(value), allow_async=True)
         return value
 
 

@@ -169,11 +169,8 @@ def test_multi_database_health_check(multidatabase: MultiDatabase):
     assert all(health_checks.values()), "Health check for all databases should pass."
 
 
-@pytest.mark.asyncio(loop_scope="session")
-async def test_list_tables_async(async_database: Database):
-    tables_task = async_database.list_tables()
-    
-    tables = await tables_task
+def test_list_tables_async(async_database: Database):
+    tables = async_database.list_tables()
     
     assert tables == [('test_table', )]
 
@@ -186,9 +183,8 @@ def test_list_schemas_sync(sync_database: Database):
         ('information_schema', )
     ]
 
-@pytest.mark.asyncio(loop_scope="session")
-async def test_list_schemas_async(async_database: Database):
-    schemas = await async_database.list_schemas()
+def test_list_schemas_async(async_database: Database):
+    schemas = async_database.list_schemas()
 
     assert schemas == [
         ('pg_toast', ), 
@@ -203,9 +199,8 @@ def test_list_triggers_sync(sync_database: Database):
 
     assert triggers == []
 
-@pytest.mark.asyncio(loop_scope="session")
-async def test_list_triggers_async(async_database: Database):
-    triggers = await async_database.list_triggers('test_table')
+def test_list_triggers_async(async_database: Database):
+    triggers = async_database.list_triggers('test_table')
     
     assert triggers == []
 
@@ -214,8 +209,7 @@ def test_list_indexes_sync(sync_database: Database):
 
     assert indexes == [('test_table_pkey', )]
 
-@pytest.mark.asyncio(loop_scope="session")
-async def test_list_indexes_async(async_database: Database):
-    indexes = await async_database.list_indexes('test_table')
+def test_list_indexes_async(async_database: Database):
+    indexes = async_database.list_indexes('test_table')
 
     assert indexes == [('test_table_pkey', )]

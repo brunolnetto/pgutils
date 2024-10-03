@@ -148,7 +148,22 @@ def test_run_async_method_no_event_loop():
     with patch('asyncio.get_event_loop', side_effect=RuntimeError("No current event loop")):
         result = run_async_method(sample_async_method)
         assert result == 42  # Check if the result is as expected
-        
+
+@pytest.mark.asyncio
+async def test_run_async_method_running_loop():
+    async def sample_async_method(x):
+        return x * 2
+    
+    result = await run_async_method(sample_async_method, 5)
+    assert result == 10
+
+def test_run_async_method_no_loop():
+    async def sample_async_method(x):
+        return x * 2
+    
+    result = run_async_method(sample_async_method, 5)
+    assert result == 10
+
 def test_missing_username():
     # Case 1: Missing username but password is provided
     uri = "postgresql://:password@localhost/dbname"
