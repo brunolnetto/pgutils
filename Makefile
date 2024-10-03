@@ -62,7 +62,7 @@ test: ## run tests quickly with the default Python
 	poetry shell
 	pytest
 
-watch: ## run tests on watchdog mode
+watch-test: ## run tests on watchdog mode
 	poetry shell
 	ptw --poll --clear .
 
@@ -72,6 +72,9 @@ lint: clean ## perform inplace lint fixes
 cov: clean ## check code coverage quickly with the default Python
 	coverage run --source "$$PACKAGE_NAME" --omit "tests/*,*/__init__.py" -m pytest
 	coverage report -m
+
+watch-cov: clean ## check code coverage quickly with the default Python
+		find . -name '*.py' | entr -c make cov
 
 env: ## Creates a virtual environment. Usage: make env
 	pip install virtualenv
