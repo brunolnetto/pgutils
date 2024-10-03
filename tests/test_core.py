@@ -2,7 +2,9 @@ import pytest
 import asyncio
 from pydantic import ValidationError
 from typing import Dict
+from unittest.mock import patch, MagicMock
 
+from sqlalchemy.exc import ProgrammingError, OperationalError
 from sqlalchemy import Column, Integer, String, text
 from sqlalchemy.exc import OperationalError
 
@@ -29,10 +31,53 @@ def test_invalid_pool_size():
             db_name="mydatabase"
         )
 
-def test_mask_sensitive_data(sync_database: Database):
-    masked_uri = sync_database.mask_sensitive_data()
-    assert "***" in masked_uri, "Sensitive data should be masked."
+
+# Test for check_database_exists
+def test_check_database_exists_true(sync_database):
+    """Test when the database exists (synchronous)."""
+    # Call the method using the sync_database fixture
+    result = sync_database.check_database_exists()
+
+    # Check that the method returned True
+    assert result is True
+
+
+def test_check_database_doesnt_exist(database_without_auto_create):
+    """Test when an error occurs during the check (synchronous)."""
+    # Check that the method returned False due to the error
+    db_exists = database_without_auto_create.check_database_exists()
     
+    assert db_exists is False
+    
+    db_exists = database_without_auto_create.check_database_exists('test_db_')
+
+    assert db_exists is False
+
+#def test_drop_database(sync_database: Database):
+#    db_name=sync_database.config.db_name
+#    db_exists = sync_database.check_database_exists()
+#    assert db_exists == True
+#
+#    sync_database.drop_database_if_exists()
+#    db_exists = sync_database.check_database_exists()
+#    assert db_exists == False
+#
+#    sync_database.create_database_if_not_exists(db_name)
+#    tables = sync_database.list_tables()
+#
+#    db_exists = sync_database.check_database_exists()
+#    assert db_exists == True
+
+
+def test_get_parallel_queries(database_without_auto_create):
+    queries=database_without_auto_create._get_parallel_queries()
+    assert queries == [
+        "SET max_parallel_workers = 8;",
+        "SET max_parallel_workers_per_gather = 4;",
+        "SET min_parallel_table_scan_size = '8MB';",
+        "SET min_parallel_index_scan_size = '512kB';"    
+    ]
+
 def test_repr(sync_database: Database):
     database_repr = str(sync_database)
     assert "***" in database_repr, "Sensitive data should be masked."
@@ -55,8 +100,6 @@ def test_paginate_sync(sync_database: Database):
         # Assertion to verify the result
         assert len(results) == 2
 
-
-
 def test_query(sync_database: Database):
     results = sync_database.query( "SELECT * FROM test_table")
 
@@ -74,6 +117,8 @@ def test_columns_exist_sync(sync_database: Database):
     
 def test_columns_exist_async(async_database: Database):
     assert async_database.check_columns_exist('test_table', [('id', ), ('name', )])
+
+
 
 def test_list_schemas(sync_database: Database):
     results = sync_database.list_schemas()
@@ -162,7 +207,7 @@ def test_list_tables(sync_database: Database):
     # Create the table if it does not exist
     sync_database.base.metadata.create_all(sync_database.engine)
     
-    tables = sync_database.list_tables()  # Your method to list tables
+    tables = sync_database.list_tables()
     
     assert ('test_table', ) in tables, "test_table should be listed in the database tables."
 

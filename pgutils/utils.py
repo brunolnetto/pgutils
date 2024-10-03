@@ -1,7 +1,7 @@
 import asyncio
 from typing import Any
 
-from sqlalchemy.engine.url import make_url
+from sqlalchemy.engine.url import make_url, URL
 from .constants import VALID_SCHEMES, VALID_SYNC_SCHEMES
 
 def validate_postgresql_uri(uri: str, allow_async: bool = False):
@@ -52,3 +52,6 @@ def run_async_method(async_method, *args, **kwargs) -> Any:
         # If there's no event loop and you aren't testing, raise an error or use asyncio.run
         return asyncio.run(async_method(*args, **kwargs))
 
+
+def mask_sensitive_data(uri: URL) -> str:
+    return str(uri._replace(password="******", username="******"))

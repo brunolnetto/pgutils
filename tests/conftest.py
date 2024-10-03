@@ -7,12 +7,11 @@ from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, AsyncSession
 
-
 from pgutils.core import Database, MultiDatabase
 from pgutils.models import DatabaseSettings
 from pgutils.testing import prepare_database
 
-DEFAULT_PORT=5433
+DEFAULT_PORT=5432
 
 # Database configuration constants
 DB_NAME = "mydb"
@@ -20,6 +19,17 @@ ADMIN_SYNC_URL=f"postgresql://postgres:postgres@localhost:{DEFAULT_PORT}/postgre
 SYNC_DB_URL = f"postgresql://postgres:postgres@localhost:{DEFAULT_PORT}/{DB_NAME}"
 ASYNC_DB_URL = f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}/{DB_NAME}"
 
+@pytest.fixture()
+def invalid_uri_config():
+    return {
+        "uri": "invalid_uri",
+        "admin_username": "postgres",
+        "admin_password": "postgres",
+        "async_mode": False,
+        "pool_size": 10,
+        "max_overflow": 5,
+        "auto_create_db": False
+    }
 
 @pytest.fixture(scope="module")
 def multidatabase_settings():
@@ -45,6 +55,20 @@ def multidatabase_settings():
         for settings_name, settings_values in settings_dict.items()
     }
 
+@pytest.fixture(scope="module")
+def sync_settings_without_auto_create():
+    return DatabaseSettings(**{
+        "uri": f"postgresql://postgres:postgres@localhost:{DEFAULT_PORT}/db_test",
+        "admin_username": "postgres",
+        "admin_password": "postgres",
+        "async_mode": False,
+        "auto_create_db": False
+    })
+
+@pytest.fixture(scope="function")
+def database_without_auto_create(sync_settings_without_auto_create):
+    db = Database(sync_settings_without_auto_create)
+    yield db
 
 @pytest.fixture(scope="module")
 def multidatabase(multidatabase_settings: Dict[str, DatabaseSettings]):
@@ -52,17 +76,6 @@ def multidatabase(multidatabase_settings: Dict[str, DatabaseSettings]):
         prepare_database(ADMIN_SYNC_URL, str(settings.uri), settings.db_name)
     
     return MultiDatabase(multidatabase_settings)
-
-@pytest.fixture()
-def invalid_uri_config():
-    return {
-        "uri": "invalid_uri",
-        "admin_username": "postgres",
-        "admin_password": "postgres",
-        "async_mode": False,
-        "pool_size": 10,
-        "max_overflow": 5,
-    }
 
 
 @pytest.fixture(scope="function")

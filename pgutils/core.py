@@ -8,7 +8,7 @@ import asyncio
 from pydantic import ValidationError, TypeAdapter
 from sqlalchemy import DDL
 from sqlalchemy import create_engine, text, inspect
-from sqlalchemy.engine.url import make_url
+from sqlalchemy.engine.url import make_url, URL
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import Session, sessionmaker, declarative_base
 from sqlalchemy.exc import (
@@ -19,7 +19,7 @@ from sqlalchemy.exc import (
 )
 
 from .models import DatabaseSettings, TableConstraint, ColumnIndex, Paginator
-from .utils import run_async_method
+from .utils import run_async_method, mask_sensitive_data
 from .constants import PAGINATION_BATCH_SIZE
 
 class Database:
@@ -36,14 +36,13 @@ class Database:
         self.async_mode = config.async_mode
         self.logger = logger or getLogger(__name__)
 
+        self.admin_engine = self._create_admin_engine()
         self.engine = self._create_engine()
         self.session_maker = self._create_sessionmaker()
 
         if config.db_name and config.auto_create_db:
             self._db_name = config.db_name
-            self.create_database_if_not_exists(config.db_name)
-
-        self.configure_parallel_queries()
+            self.create_database_if_not_exists(config.db_name)       
 
     def _create_engine(self):
         """Create and return the database engine based on async mode."""
@@ -61,6 +60,16 @@ class Database:
             pool_pre_ping=True
         )
         return engine
+    
+    def _create_admin_engine(self):
+        """Create an admin engine to execute administrative tasks."""
+        admin_uri_str = str(self.admin_uri)
+        self.logger.debug(f"Creating admin engine with URI: {mask_sensitive_data(self.admin_uri)}")
+        return create_engine(
+            admin_uri_str, 
+            isolation_level="AUTOCOMMIT",
+            pool_pre_ping=True
+        )
 
     def _create_sessionmaker(self):
         """Create and return a sessionmaker for the database engine."""
@@ -96,7 +105,27 @@ class Database:
         else:
             self.set_parallel_queries_sync()
 
-    def create_database_if_not_exists(self, db_name: str):
+    def check_database_exists(self, db_name: str = None):
+        """Checks if the database exists."""
+        db_name_to_check = db_name or self.config.db_name
+
+        if not db_name_to_check:
+            self.logger.error("No database name provided or configured.")
+            return False
+
+        with self.admin_engine.connect() as connection:
+            try:
+                create_query=text(f"SELECT 1 FROM pg_database WHERE datname = '{db_name_to_check}';")
+                result = connection.execute(create_query)
+                exists = result.scalar() is not None  # Check if any row was returned
+                return exists
+            except (OperationalError, ProgrammingError) as e:
+                self.logger.error(f"Error while checking if database '{db_name_to_check}' exists: {e}")
+                return False
+
+    def create_database_if_not_exists(self, db_name: str = None):
+        db_name_to_check = db_name or self.config.db_name
+
         """Creates the database if it does not exist."""
         # Create a temporary engine for the default database
         temp_engine = create_engine(str(self.admin_uri), isolation_level="AUTOCOMMIT")
@@ -105,16 +134,14 @@ class Database:
         with temp_engine.connect() as connection:
             try:
                 # Attempt to create the database
-                query=text(f"CREATE DATABASE {db_name};")
+                query=text(f"CREATE DATABASE {db_name_to_check};")
                 
                 connection.execute(query)
             except ProgrammingError as e:
                 # Check if the error indicates the database already exists
                 if 'already exists' not in str(e):
                     raise  # Reraise if it's a different error
-    
-    
-    
+
     def drop_database_if_exists(self):
         """Drops the database if it exists."""
         if self._db_name:
@@ -251,10 +278,6 @@ class Database:
     def get_session(self) -> Union[asynccontextmanager, contextmanager]:
         """Unified session manager for synchronous and asynchronous operations."""
         return self._get_async_session() if self.async_mode else self._get_sync_session()
-
-    def mask_sensitive_data(self) -> str:
-        masked_url = self.uri._replace(password="******", username="******")
-        return str(masked_url)
 
     def _health_check_sync(self):
         """Execute health check logic."""
@@ -638,7 +661,7 @@ class Database:
             yield []  # Return an empty page in case of failure
     
     def __repr__(self):
-        return f"<Database(uri={self.mask_sensitive_data()}, async_mode={self.async_mode})>"
+        return f"<Database(uri={mask_sensitive_data(self.uri)}, async_mode={self.async_mode})>"
 
 
 class MultiDatabase:

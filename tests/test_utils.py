@@ -2,7 +2,12 @@ import pytest
 import asyncio
 from unittest.mock import patch
 
-from pgutils.utils import validate_postgresql_uri, run_async_method
+from pgutils.core import Database
+from pgutils.utils import (
+    validate_postgresql_uri, 
+    run_async_method, 
+    mask_sensitive_data,
+)
 
 # Test valid URIs for psycopg
 @pytest.mark.parametrize("valid_psycopg_uri", [
@@ -185,3 +190,7 @@ def test_no_username_or_password():
     # Case 4: Neither username nor password is provided
     uri = "postgresql://localhost/dbname"
     assert validate_postgresql_uri(uri) == uri
+
+def test_mask_sensitive_data(sync_database: Database):
+    masked_uri = mask_sensitive_data(sync_database.uri)
+    assert "***" in masked_uri, "Sensitive data should be masked."
