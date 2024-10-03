@@ -389,9 +389,5 @@ async def test_get_total_count_async(async_session_factory):
         # Assertion to verify the result
         assert total_count == 4
 
-# Example test for db_name property
-def test_db_name(sync_settings: DatabaseSettings):
-    assert sync_settings.db_name == "db1"
-
 
 

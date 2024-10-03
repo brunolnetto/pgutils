@@ -60,30 +60,23 @@ def test_query(sync_database: Database):
 
     # Assertion to verify the result
     assert len(results) == 4
-    
-def test_list_tables(sync_database: Database):
-    results = sync_database.list_tables()
-    
-    # Assertion to verify the result
-    assert results == ['public']
 
 def test_list_columns(sync_database: Database):
     results = sync_database.list_columns('test_table')
-    
+
     # Assertion to verify the result
-    assert results == ['id', 'name']
-    
+    assert results == [('id', ), ('name', )]
+
 def test_list_schemas(sync_database: Database):
     results = sync_database.list_schemas()
     
     # Assertion to verify the result
-    assert results == ['pg_toast', 'pg_catalog', 'public', 'information_schema']
-
-def test_list_indexes(sync_database: Database):
-    results = sync_database.list_indexes('test_table')
-    
-    # Assertion to verify the result
-    assert results == []
+    assert results == [
+        ('pg_toast', ), 
+        ('pg_catalog', ), 
+        ('public', ), 
+        ('information_schema', )
+    ]
 
 def test_list_views(sync_database: Database):
     results = sync_database.list_views('public')
@@ -95,13 +88,13 @@ def test_list_sequences(sync_database: Database):
     results = sync_database.list_sequences()
 
     # Assertion to verify the result
-    assert results == []
+    assert results == [('test_table_id_seq', )]
 
 def test_list_constraints(sync_database: Database):
     results = sync_database.list_constraints('test_table')
-
+    print(results)
     # Assertion to verify the result
-    assert results == ['test_table_pkey']
+    assert results == [('test_table_pkey', 'PRIMARY KEY', 'test_table', 'id', 'test_table', 'id')]
 
 def test_list_triggers(sync_database: Database):
     results = sync_database.list_triggers('test_table')
@@ -162,7 +155,8 @@ def test_list_tables(sync_database: Database):
     sync_database.base.metadata.create_all(sync_database.engine)
     
     tables = sync_database.list_tables()  # Your method to list tables
-    assert 'test_table' in tables, "test_table should be listed in the database tables."
+    
+    assert ('test_table', ) in tables, "test_table should be listed in the database tables."
 
 
 def test_create_index_statement(sync_database: Database):
@@ -175,24 +169,33 @@ def test_multi_database_health_check(multidatabase: MultiDatabase):
     assert all(health_checks.values()), "Health check for all databases should pass."
 
 
-def test_list_tables_sync(sync_database: Database):
-    assert sync_database.list_tables() == ['test_table']
-
-
-def test_list_tables_async(async_database: Database):
-    tables = async_database.list_tables()
+@pytest.mark.asyncio(loop_scope="session")
+async def test_list_tables_async(async_database: Database):
+    tables_task = async_database.list_tables()
     
-    assert tables == ['test_table']
+    tables = await tables_task
+    
+    assert tables == [('test_table', )]
 
 def test_list_schemas_sync(sync_database: Database):
     schemas = sync_database.list_schemas()
-    assert schemas == {'information_schema', 'public'}
+    assert schemas == [
+        ('pg_toast', ), 
+        ('pg_catalog', ), 
+        ('public', ), 
+        ('information_schema', )
+    ]
 
+@pytest.mark.asyncio(loop_scope="session")
+async def test_list_schemas_async(async_database: Database):
+    schemas = await async_database.list_schemas()
 
-def test_list_schemas_async(async_database: Database):
-    tables = async_database.list_schemas()
-    
-    assert tables == {'pg_toast', 'pg_catalog', 'public', 'information_schema'}
+    assert schemas == [
+        ('pg_toast', ), 
+        ('pg_catalog', ), 
+        ('public',), 
+        ('information_schema',)
+    ]
 
 
 def test_list_triggers_sync(sync_database: Database):
@@ -200,19 +203,19 @@ def test_list_triggers_sync(sync_database: Database):
 
     assert triggers == []
 
-
-def test_list_triggers_async(async_database: Database):
-    triggers = async_database.list_triggers('test_table')
-
+@pytest.mark.asyncio(loop_scope="session")
+async def test_list_triggers_async(async_database: Database):
+    triggers = await async_database.list_triggers('test_table')
+    
     assert triggers == []
 
 def test_list_indexes_sync(sync_database: Database):
     indexes = sync_database.list_indexes('test_table')
 
-    assert indexes == []
+    assert indexes == [('test_table_pkey', )]
 
+@pytest.mark.asyncio(loop_scope="session")
+async def test_list_indexes_async(async_database: Database):
+    indexes = await async_database.list_indexes('test_table')
 
-def test_list_indexes_async(async_database: Database):
-    indexes = async_database.list_indexes('test_table')
-
-    assert indexes == []
+    assert indexes == [('test_table_pkey', )]

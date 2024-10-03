@@ -1,4 +1,5 @@
 import pytest
+import asyncio
 from typing import List, Any, Dict
 
 from pydantic import ValidationError
@@ -20,7 +21,7 @@ SYNC_DB_URL = f"postgresql://postgres:postgres@localhost:{DEFAULT_PORT}/{DB_NAME
 ASYNC_DB_URL = f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}/{DB_NAME}"
 
 
-@pytest.fixture()
+@pytest.fixture(scope="module")
 def multidatabase_settings():
     settings_dict = {
         "sync": {
@@ -43,14 +44,14 @@ def multidatabase_settings():
     }
 
 
-@pytest.fixture()
+@pytest.fixture(scope="module")
 def multidatabase(multidatabase_settings: Dict[str, DatabaseSettings]):
     for settings_name, settings in multidatabase_settings.items():
         prepare_database(ADMIN_SYNC_URL, str(settings.uri), settings.db_name)
     
     return MultiDatabase(multidatabase_settings)
 
-@pytest.fixture
+@pytest.fixture()
 def invalid_uri_config():
     return {
         "uri": "invalid_uri",
@@ -62,29 +63,18 @@ def invalid_uri_config():
     }
 
 
-@pytest.fixture
-def sync_settings(multidatabase_settings):
-    return multidatabase_settings['sync']
-
-
-@pytest.fixture
-def async_settings(multidatabase_settings):
-    return multidatabase_settings['async']
-
-
-@pytest.fixture
-def sync_database(sync_settings: DatabaseSettings):
+@pytest.fixture(scope="module")
+def sync_database(multidatabase_settings):
+    sync_settings=multidatabase_settings['sync']
     db = Database(sync_settings)
     yield db
-    db.drop_database_if_exists(sync_settings.db_name)
 
 
-@pytest.fixture
-def async_database(async_settings: DatabaseSettings):
+@pytest.fixture(scope="module")
+def async_database(multidatabase_settings):
+    async_settings=multidatabase_settings['async']
     db = Database(async_settings)
     yield db
-    db.drop_database_if_exists(async_settings.db_name)
-
 
 @pytest.fixture(scope="module")
 def sync_db_engine():
