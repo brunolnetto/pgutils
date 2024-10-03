@@ -28,13 +28,15 @@ def multidatabase_settings():
             "uri": f"postgresql+psycopg://postgres:postgres@localhost:{DEFAULT_PORT}/db1",
             "admin_username": "postgres",
             "admin_password": "postgres",
-            "async_mode": False
+            "async_mode": False,
+            "auto_create_db": True
         },
         "async": {
             "uri": f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}/db2",
             "admin_username": "postgres",
             "admin_password": "postgres",
-            "async_mode": True
+            "async_mode": True,
+            "auto_create_db": True
         }
     }
     

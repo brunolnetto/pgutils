@@ -79,6 +79,7 @@ class DatabaseSettings(BaseModel):
     async_mode: bool = False
     pool_size: int = Field(default=DEFAULT_POOL_SIZE, gt=0)
     max_overflow: int = Field(default=DEFAULT_MAX_OVERFLOW, ge=0)
+    auto_create_db: bool = Field(default=False)
 
     @property
     def db_name(self) -> str:

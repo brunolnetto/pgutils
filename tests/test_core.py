@@ -38,7 +38,7 @@ def test_repr(sync_database: Database):
     assert "***" in database_repr, "Sensitive data should be masked."
     assert f"async_mode={str(sync_database.async_mode)}" in database_repr, "Async mode must be present"
 
-def test_paginate(sync_database: Database):
+def test_paginate_sync(sync_database: Database):
     with sync_database.get_session() as session:
         # Fetch and assert paginated results in batches
         expected_batches = [
@@ -55,6 +55,8 @@ def test_paginate(sync_database: Database):
         # Assertion to verify the result
         assert len(results) == 2
 
+
+
 def test_query(sync_database: Database):
     results = sync_database.query( "SELECT * FROM test_table")
 
@@ -66,6 +68,12 @@ def test_list_columns(sync_database: Database):
 
     # Assertion to verify the result
     assert results == [('id', ), ('name', )]
+
+def test_columns_exist_sync(sync_database: Database):
+    assert sync_database.check_columns_exist('test_table', ['id', 'name'])
+    
+def test_columns_exist_async(async_database: Database):
+    assert async_database.check_columns_exist('test_table', [('id', ), ('name', )])
 
 def test_list_schemas(sync_database: Database):
     results = sync_database.list_schemas()

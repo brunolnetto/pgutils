@@ -39,8 +39,9 @@ class Database:
         self.engine = self._create_engine()
         self.session_maker = self._create_sessionmaker()
 
-        if config.db_name:
-            self.__create_database_if_not_exists(config.db_name)
+        if config.db_name and config.auto_create_db:
+            self._db_name = config.db_name
+            self.create_database_if_not_exists(config.db_name)
 
         self.configure_parallel_queries()
 
@@ -95,7 +96,7 @@ class Database:
         else:
             self.set_parallel_queries_sync()
 
-    def __create_database_if_not_exists(self, db_name: str):
+    def create_database_if_not_exists(self, db_name: str):
         """Creates the database if it does not exist."""
         # Create a temporary engine for the default database
         temp_engine = create_engine(str(self.admin_uri), isolation_level="AUTOCOMMIT")
@@ -112,29 +113,36 @@ class Database:
                 if 'already exists' not in str(e):
                     raise  # Reraise if it's a different error
     
-    def drop_database_if_exists(self, db_name: str):
+    
+    
+    def drop_database_if_exists(self):
         """Drops the database if it exists."""
-        admin_uri_str=str(self.admin_uri)
-        sync_engine=create_engine(
-            admin_uri_str, 
-            isolation_level="AUTOCOMMIT"
-        )
-        
-        with sync_engine.connect() as connection:
-            try:
-                connection.execute(text(f"""
-                    SELECT pg_terminate_backend(pg_stat_activity.pid)
-                    FROM pg_stat_activity
-                    WHERE pg_stat_activity.datname = '{db_name}'
-                    AND pid <> pg_backend_pid();
-                """))
-                self.logger.info(f"Terminated connections for database '{db_name}'.")
-                connection.execute(text(f"DROP DATABASE IF EXISTS \"{db_name}\""))
-                self.logger.info(f"Database '{db_name}' dropped successfully.")
-            except (OperationalError, ProgrammingError) as e:
-                self.logger.error(f"Error while dropping database '{db_name}': {e}")
+        if self._db_name:
+            admin_uri_str=str(self.admin_uri)
+            sync_engine=create_engine(
+                admin_uri_str, 
+                isolation_level="AUTOCOMMIT"
+            )
+            
+            with sync_engine.connect() as connection:
+                try:
+                    connection.execute(text(f"""
+                        SELECT pg_terminate_backend(pg_stat_activity.pid)
+                        FROM pg_stat_activity
+                        WHERE pg_stat_activity.datname = '{self._db_name}'
+                        AND pid <> pg_backend_pid();
+                    """))
+                    self.logger.info(f"Terminated connections for database '{self._db_name}'.")
+                    connection.execute(text(f"DROP DATABASE IF EXISTS \"{self._db_name}\""))
+                    self.logger.info(f"Database '{self._db_name}' dropped successfully.")
+                except (OperationalError, ProgrammingError) as e:
+                    self.logger.error(f"Error while dropping database '{self._db_name}': {e}")
 
-    async def _check_columns_exist_async(self, table_name: str, columns: List[str]) -> List[str]:
+    def _are_columns_present(self, columns: List[str], actual_columns: set) -> bool:
+        """Helper method to check if all specified columns are present in the actual columns."""
+        return all(col in actual_columns for col in columns)
+    
+    async def _check_columns_exist_async(self, table_name: str, columns: List[str]) -> bool:
         """Check if the specified columns exist in the table asynchronously."""
         async with self.get_session() as session:
             query=text(
@@ -145,17 +153,18 @@ class Database:
                 """
             )
             result = await session.execute(query, {"table_name": table_name})
-            actual_columns = {row['column_name'] for row in result}
+            
+            actual_columns = {row for row in result}
+            print(actual_columns)
+            print(columns)
+            return self._are_columns_present(columns, actual_columns)
 
-            missing_columns = [col for col in columns if col not in actual_columns]
-            return missing_columns
-
-    def _check_columns_exist_sync(self, table_name: str, columns: List[str]) -> List[str]:
+    def _check_columns_exist_sync(self, table_name: str, columns: List[str]) -> bool:
         """Check if the specified columns exist in the table synchronously."""
         inspector = inspect(self.engine)
         actual_columns = {column['name'] for column in inspector.get_columns(table_name)}
-        missing_columns = [col for col in columns if col not in actual_columns]
-        return missing_columns
+        
+        return self._are_columns_present(columns, actual_columns)
 
     def check_columns_exist(self, table_name: str, columns: List[str]) -> List[str]:
         """Check if the specified columns exist in the table, supporting both async and sync modes."""
