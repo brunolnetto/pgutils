@@ -23,7 +23,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncConnection
 
-from .utils import validate_postgresql_uri
+from .utils import validate_postgresql_uri, construct_uri
 from .constants import (
     PAGINATION_BATCH_SIZE,
     DEFAULT_POOL_SIZE,
@@ -102,14 +102,11 @@ class DatabaseSettings(BaseModel):
         password = parsed_uri.password or self.admin_password
         port = parsed_uri.port or self.default_port
 
-        return self.construct_uri(
+        return construct_uri(
             drivername, username, password,
             parsed_uri.host, port, parsed_uri.database or ''
         )
 
-    def construct_uri(self, drivername: str, username: str, password: str, host: str, port: int, database: str) -> AnyUrl:
-        """Constructs a PostgreSQL URI from the provided components."""
-        return make_url(f"{drivername}://{username}:{password}@{host}:{port}/{database}")
 
     @field_validator('uri')
     def validate_uri(cls, value: AnyUrl) -> AnyUrl:
@@ -118,6 +115,48 @@ class DatabaseSettings(BaseModel):
             raise ValueError(f"URI must start with {VALID_SCHEMES}.")
         validate_postgresql_uri(str(value), allow_async=True)
         return value
+
+
+class DataSourceSettings(BaseModel):
+    """Configuration settings for a DataSource."""
+    name: str
+    base_uri: AnyUrl                                    # Base URI for the data source
+    databases: List[DatabaseSettings]                   # List of databases in the data source
+    description: Optional[str] = None                   # Optional field for a description of the data source
+    connection_timeout: int = Field(default=30, ge=0)   # Timeout for connections in seconds
+    retry_attempts: int = Field(default=3, ge=0)        # Number of attempts to connect to the database
+    failover_strategy: Optional[str] = None             # Failover strategy, if any
+
+    @field_validator('databases')
+    def check_databases(cls, values):
+        """Ensures that at least one database configuration is provided."""
+        databases = values.get('databases', [])
+        if not databases:
+            raise ValueError("At least one database must be defined in the data source.")
+        return values
+
+    @field_validator('databases')
+    def validate_databases(cls, values):
+        """Validates that all databases reference the base URI and have unique names."""
+        base_uri = values.get('base_uri')
+        databases = values.get('databases', [])
+        
+        # Check for unique database names
+        names = set()
+        for db in databases:
+            if db.name in names:
+                raise ValueError(f"Database name '{db.name}' must be unique within the data source.")
+            names.add(db.name)
+        
+        for db in databases:
+            # Ensure each database has the same base URI
+            if not db.complete_uri.startswith(str(base_uri)):
+                raise ValueError(f"Database '{db.name}' must reference the base URI '{base_uri}'.")
+
+        return values
+
+    def __repr__(self):
+        return f"<DataSourceSettings(name={self.name}, databases={len(self.databases)})>"
 
 
 class TableConstraint(BaseModel):

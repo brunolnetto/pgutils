@@ -113,12 +113,10 @@ def test_list_columns(sync_database: Database):
     assert results == [('id', ), ('name', )]
 
 def test_columns_exist_sync(sync_database: Database):
-    assert sync_database.check_columns_exist('test_table', ['id', 'name'])
+    assert sync_database.column_exists('test_table', 'name')
     
 def test_columns_exist_async(async_database: Database):
-    assert async_database.check_columns_exist('test_table', [('id', ), ('name', )])
-
-
+    assert async_database.column_exists('test_table', 'id')
 
 def test_list_schemas(sync_database: Database):
     results = sync_database.list_schemas()
@@ -259,10 +257,13 @@ def test_list_triggers_async(async_database: Database):
 
 def test_list_indexes_sync(sync_database: Database):
     indexes = sync_database.list_indexes('test_table')
-
     assert indexes == [('test_table_pkey', )]
+    index_exists = sync_database._index_exists('test_table', 'test_table_pkey')
+    assert index_exists == True
 
 def test_list_indexes_async(async_database: Database):
     indexes = async_database.list_indexes('test_table')
-
     assert indexes == [('test_table_pkey', )]
+
+    index_exists = async_database._index_exists('test_table', 'test_table_pkey')
+    assert index_exists == True

@@ -164,12 +164,8 @@ class Database:
                     self.logger.info(f"Database '{self._db_name}' dropped successfully.")
                 except (OperationalError, ProgrammingError) as e:
                     self.logger.error(f"Error while dropping database '{self._db_name}': {e}")
-
-    def _are_columns_present(self, columns: List[str], actual_columns: set) -> bool:
-        """Helper method to check if all specified columns are present in the actual columns."""
-        return all(col in actual_columns for col in columns)
     
-    async def _check_columns_exist_async(self, table_name: str, columns: List[str]) -> bool:
+    async def _column_exists_async(self, table_name: str, column_candidate: str) -> bool:
         """Check if the specified columns exist in the table asynchronously."""
         async with self.get_session() as session:
             query=text(
@@ -181,24 +177,22 @@ class Database:
             )
             result = await session.execute(query, {"table_name": table_name})
             
-            actual_columns = {row for row in result}
-            print(actual_columns)
-            print(columns)
-            return self._are_columns_present(columns, actual_columns)
+            actual_columns = {row[0] for row in result}
+            return column_candidate in actual_columns
 
-    def _check_columns_exist_sync(self, table_name: str, columns: List[str]) -> bool:
+    def _column_exists_sync(self, table_name: str, column_candidate: str) -> bool:
         """Check if the specified columns exist in the table synchronously."""
-        inspector = inspect(self.engine)
+        inspector = inspect(self.engine) 
         actual_columns = {column['name'] for column in inspector.get_columns(table_name)}
         
-        return self._are_columns_present(columns, actual_columns)
+        return column_candidate in actual_columns
 
-    def check_columns_exist(self, table_name: str, columns: List[str]) -> List[str]:
+    def column_exists(self, table_name: str, columns: List[str]) -> List[str]:
         """Check if the specified columns exist in the table, supporting both async and sync modes."""
         if self.async_mode:
-            return run_async_method(self._check_columns_exist_async, table_name, columns)
+            return run_async_method(self._column_exists_async, table_name, columns)
         else:
-            return self._check_columns_exist_sync(table_name, columns)
+            return self._column_exists_sync(table_name, columns)
 
     def _create_index_statement(self, table_name: str, column_name: str, index_type: str) -> DDL:
         """Generate the DDL statement for creating an index."""
@@ -211,39 +205,41 @@ class Database:
         """Creates indexes based on the provided configuration."""
         if not indexes:
             self.logger.warning("No indexes provided for creation.")
-            return  # No indexes to create
+            return
 
         for table_name, index_info in indexes.items():
-            missing_columns = await self.check_columns_exist(table_name, index_info['columns'])
+            missing_columns = await self.column_exists(table_name, index_info['columns'])
             if missing_columns:
                 self.logger.error(f"Missing columns {missing_columns} in table '{table_name}'.")
                 raise ValueError(f"Columns {missing_columns} do not exist in table '{table_name}'.")
 
             await self._create_index(table_name, index_info)
 
-    async def _create_index(self, table_name: str, index_info: Dict[str, Any]):
+    def _create_index(self, table_name: str, index_info: Dict[str, Any]):
         """Helper method to create a single index."""
         columns = index_info['columns']
         index_type = index_info.get('type', 'btree')
         index_name = f"{table_name}_{'_'.join(columns)}_idx"
 
-        async with AsyncSession(self.engine) as session:
+        with self.get_session() as session:
             for column in columns:
-                if await self._index_exists(session, table_name, index_name):
+                if self._index_exists(table_name, index_name):
                     self.logger.info(f"Index {index_name} already exists on table {table_name}.")
                     return
 
-                index_stmt = await self._create_index_statement(table_name, columns, index_type)
-                await self._execute_index_creation(session, index_stmt, table_name)
+                index_stmt = self._create_index_statement(table_name, columns, index_type)
+                self._execute_index_creation(session, index_stmt, table_name)
 
+    def _index_exists(self, table_name: str, index_name: str) -> bool:
+        """Check if the index exists in the specified table, supporting both sync and async modes."""
+        return any(index == (index_name, ) for index in self.list_indexes(table_name))
 
-    def _index_exists(self, session: AsyncSession, table_name: str, index_name: str) -> bool:
-        """Check if the index exists in the specified table."""
-        inspector = inspect(session.bind)
-        existing_indexes = inspector.get_indexes(table_name)
-        return any(index['name'] == index_name for index in existing_indexes)
-
-    async def _execute_index_creation(self, session: AsyncSession, index_stmt: DDL, table_name: str):
+    async def _execute_index_creation(
+            self, 
+            session: Union[Session, AsyncSession], 
+            index_stmt: DDL, 
+            table_name: str
+        ):
         """Execute the index creation statement."""
         try:
             async with session.begin():

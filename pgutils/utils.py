@@ -1,7 +1,9 @@
 import asyncio
 from typing import Any
+from pydantic import AnyUrl
 
 from sqlalchemy.engine.url import make_url, URL
+
 from .constants import VALID_SCHEMES, VALID_SYNC_SCHEMES
 
 def validate_postgresql_uri(uri: str, allow_async: bool = False):
@@ -55,3 +57,14 @@ def run_async_method(async_method, *args, **kwargs) -> Any:
 
 def mask_sensitive_data(uri: URL) -> str:
     return str(uri._replace(password="******", username="******"))
+
+def construct_uri(
+    drivername: str, 
+    username: str, 
+    password: str, 
+    host: str, 
+    port: int, 
+    database: str
+) -> AnyUrl:
+        """Constructs a PostgreSQL URI from the provided components."""
+        return make_url(f"{drivername}://{username}:{password}@{host}:{port}/{database}")
