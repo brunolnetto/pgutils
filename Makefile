@@ -76,10 +76,6 @@ cov: clean ##
 watch-cov: clean ## check code coverage quickly with the default Python 
 	find . -name '*.py' | entr make cov
 
-
-watch-cov: clean ## check code coverage quickly with the default Python
-		find . -name '*.py' | entr -c make cov
-
 env: ## Creates a virtual environment. Usage: make env
 	pip install virtualenv
 	virtualenv .venv
