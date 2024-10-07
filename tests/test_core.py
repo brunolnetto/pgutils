@@ -341,8 +341,6 @@ def test_list_tables(
         "test_table should be listed in the async database tables."
     assert 'test_table' in ds_db2_tables, \
         "test_table should be listed in the async database tables."
-    
-
 
 def test_list_schemas(
     sync_database: Database, 

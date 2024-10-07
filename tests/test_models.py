@@ -7,7 +7,6 @@ from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, AsyncSession
 
-
 # Assuming the following imports based on your original code
 from pgutils.models import DatabaseSettings, ColumnIndex, TablePaginator
 from pgutils.constants import DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD
@@ -330,7 +329,7 @@ def test_get_total_count(sync_session_factory):
     
     assert paginator._get_total_count() == 4
 
-def test_sync_paginator_after_deleting_all_entries(sync_db_engine, sync_session_factory):
+def test_sync_paginator_after_deleting_all_entries(sync_db_engine, sync_session_factory):n
     sync_session: Session = sync_session_factory()
     
     # Step 1: Delete all entries from the table

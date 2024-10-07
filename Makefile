@@ -82,8 +82,8 @@ cov: clean ##
 	coverage run --source "$$PACKAGE_NAME" --omit "tests/*,*/__init__.py" -m pytest
 	coverage report -m
 
-watch-cov: clean ## check code coverage quickly with the default Python 
-	find . -name '*.py' | entr make cov
+watch-cov: clean ## check code coverage quickly with the default Python
+		find . -name '*.py' | entr -c make cov
 
 env: ## Creates a virtual environment. Usage: make env
 	pip install virtualenv
