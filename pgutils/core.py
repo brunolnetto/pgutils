@@ -47,7 +47,7 @@ class Database:
         self.session_maker = self._create_sessionmaker()
 
         if config.name and config.auto_create_db:
-            self._db_name = config.name
+            self.name = config.name
             self.create_database_if_not_exists(config.name)       
 
     def _create_engine(self):
@@ -604,10 +604,6 @@ class Database:
         if is_valid and match(r"^[^a-zA-Z0-9]+$", table_name):
             is_valid = False
 
-        # Ensure the name is not just underscores
-        if is_valid and all(char == '_' for char in table_name):
-            is_valid = False
-
         if not is_valid:
             self.logger.warning(f"Invalid table name attempted: '{table_name}'")
 
@@ -696,6 +692,59 @@ class Datasource:
         if name not in self.databases:
             raise KeyError(f"Database '{name}' not found.")
         return self.databases[name]
+
+    def list_tables(self, database_name: str, table_schema: str):
+        """List tables from a specified database or from all databases."""
+        return self.get_database(database_name).list_tables(table_schema)
+
+    def list_indexes(self, database_name: str, table_name: str):
+        """List indexes for a table in a specified database or across all databases."""
+        return self.get_database(database_name).list_schemas()
+
+    def list_indexes(self, database_name: str, table_name: str):
+        """List indexes for a table in a specified database or across all databases."""
+        return self.get_database(database_name).list_indexes(table_name)
+
+    def list_views(self, database_name: str, table_schema: str):
+        """List views from a specified database or from all databases."""
+
+    def list_sequences(self, database_name: str):
+        """List sequences from a specified database or from all databases."""
+
+    def list_constraints(self, database_name: str, table_schema: str, table_name: str):
+        """List constraints for a table in a specified database or across all databases."""
+
+    def list_triggers(self, database_name: str, table_name: str):
+        """List triggers for a table in a specified database or across all databases."""
+        return self.get_database(database_name).list_triggers(table_name)
+
+    def list_functions(self, database_name: str):
+        """List functions from a specified database or from all databases."""
+        return self.get_database(database_name).list_functions()
+
+    def list_procedures(self, database_name: str):
+        """List procedures from a specified database or from all databases."""
+        return self.get_database(database_name).list_procedures()
+
+    def list_materialized_views(self, database_name: str):
+        """List materialized views from a specified database or from all databases."""
+        return self.get_database(database_name).list_materialized_views()
+
+    def list_columns(self, database_name: str, table_schema: str, table_name: str):
+        """List columns for a table in a specified database or across all databases."""
+        return self.get_database(database_name).list_columns(table_schema, table_name)
+
+    def list_types(self, database_name: str):
+        """List user-defined types from a specified database or from all databases."""
+        return self.get_database(database_name).list_types()
+
+    def list_roles(self, database_name: str):
+        """List roles from a specified database or from all databases."""
+        return self.get_database(database_name).list_roles()
+
+    def list_extensions(self, database_name: str):
+        """List extensions installed in a specified database or from all databases."""
+        return self.get_database(database_name).list_extensions()
 
     def health_check_all(self) -> Dict[str, bool]:
         """
