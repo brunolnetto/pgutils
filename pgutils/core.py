@@ -2,6 +2,7 @@ from contextlib import contextmanager, asynccontextmanager
 from typing import Union, List, Any, Generator, AsyncGenerator, Dict, Optional
 
 from logging import getLogger, Logger 
+import re
 from re import match
 import asyncio
 
@@ -31,6 +32,7 @@ class Database:
     Database class for managing PostgreSQL connections and operations.
     Supports both synchronous and asynchronous operations.
     """
+    RESERVED_KEYWORDS = {"SELECT", "INSERT", "DELETE", "UPDATE", "DROP", "CREATE", "FROM", "WHERE", "JOIN", "TABLE", "INDEX"}
 
     def __init__(self, config: DatabaseSettings, logger: Logger = None):
         self.config = config
@@ -44,9 +46,9 @@ class Database:
         self.engine = self._create_engine()
         self.session_maker = self._create_sessionmaker()
 
-        if config.db_name and config.auto_create_db:
-            self._db_name = config.db_name
-            self.create_database_if_not_exists(config.db_name)       
+        if config.name and config.auto_create_db:
+            self._db_name = config.name
+            self.create_database_if_not_exists(config.name)       
 
     def _create_engine(self):
         """Create and return the database engine based on async mode."""
@@ -84,7 +86,7 @@ class Database:
 
     def check_database_exists(self, db_name: str = None):
         """Checks if the database exists."""
-        db_name_to_check = db_name or self.config.db_name
+        db_name_to_check = db_name or self.config.name
 
         if not db_name_to_check:
             self.logger.error("No database name provided or configured.")
@@ -101,7 +103,7 @@ class Database:
                 return False
 
     def create_database_if_not_exists(self, db_name: str = None):
-        db_name_to_check = db_name or self.config.db_name
+        db_name_to_check = db_name or self.config.name
 
         """Creates the database if it does not exist."""
         # Create a temporary engine for the default database
@@ -171,13 +173,6 @@ class Database:
         else:
             return self._column_exists_sync(table_name, columns)
 
-    def _create_index_statement(self, table_name: str, column_name: str, index_type: str) -> DDL:
-        """Generate the DDL statement for creating an index."""
-        return DDL(
-            f"CREATE INDEX IF NOT EXISTS {table_name}_{column_name}_idx "
-            f"ON {table_name} USING {index_type} ({column_name});"
-        )
-
     async def create_indexes(self, indexes: Dict[str, ColumnIndex]):
         """Creates indexes based on the provided configuration."""
         if not indexes:
@@ -198,31 +193,26 @@ class Database:
         index_type = index_info.get('type', 'btree')
         index_name = f"{table_name}_{'_'.join(columns)}_idx"
 
-        with self.get_session() as session:
-            for column in columns:
-                if self._index_exists(table_name, index_name):
-                    self.logger.info(f"Index {index_name} already exists on table {table_name}.")
-                    return
+        for column_name in columns:
+            if self._index_exists(table_name, index_name):
+                self.logger.info(f"Index {index_name} already exists on table {table_name}.")
+                return
 
-                index_stmt = self._create_index_statement(table_name, columns, index_type)
-                self._execute_index_creation(session, index_stmt, table_name)
+            index_stmt = DDL(
+                f"CREATE INDEX IF NOT EXISTS {table_name}_{column_name}_idx "
+                f"ON {table_name} USING {index_type} ({column_name});"
+            )
+            
+            with self.get_session() as session:
+                try:
+                    with session.begin():
+                        session.execute(index_stmt)
+                except Exception as e:
+                    self.logger.error(f"Error creating index on {table_name}: {e}")
 
     def _index_exists(self, table_name: str, index_name: str) -> bool:
         """Check if the index exists in the specified table, supporting both sync and async modes."""
         return any(index == index_name for index in self.list_indexes(table_name))
-
-    async def _execute_index_creation(
-            self, 
-            session: Union[Session, AsyncSession], 
-            index_stmt: DDL, 
-            table_name: str
-        ):
-        """Execute the index creation statement."""
-        try:
-            async with session.begin():
-                await session.execute(index_stmt)
-        except Exception as e:
-            self.logger.error(f"Error creating index on {table_name}: {e}")
 
     @asynccontextmanager
     async def _get_async_session(self) -> AsyncGenerator[AsyncSession, None]:
@@ -265,20 +255,15 @@ class Database:
         except Exception:
             return False
 
-    async def _health_check_async(self) -> bool:
-        """Checks if the database connection is alive."""    
-        # Implement your async health check logic here        
-        async with self.get_session() as session:    
-            query=text("SELECT 1")
-            result = await session.execute(query)
-            is_healthy=result.scalar() == 1
-
-            return is_healthy
-
     async def health_check_async(self) -> bool:
         """Asynchronous health check for database."""
         try:
-            return await self._health_check_async()
+            async with self.get_session() as session:    
+                query=text("SELECT 1")
+                result = await session.execute(query)
+                is_healthy=result.scalar() == 1
+
+                return is_healthy
         except Exception as e:
             self.logger.error(f"Async health check failed: {e}")
             return False
@@ -296,7 +281,7 @@ class Database:
             else:
                 if self.async_mode:
                     # Run the async function in the current event loop
-                    return run_async_method(self._health_check_async)
+                    return run_async_method(self.health_check_async)
                 else:
                     return self._health_check_sync()
         except Exception as e:
@@ -372,6 +357,8 @@ class Database:
 
             # Run the asynchronous method if async_mode is True
             run_async_method(create_tables_async)
+            
+            return
             
         self.base.metadata.create_all(self.engine)
         return
@@ -513,10 +500,7 @@ class Database:
 
     # 12. List User-Defined Types
     def list_types(self):
-        sync_query = """
-            SELECT typname FROM pg_type 
-            WHERE typtype = 'e';  -- Only enumerated types
-        """
+        sync_query = "SELECT typname FROM pg_type WHERE typtype = 'e';"
         return self._execute_list_query(sync_query)
 
     # 13. List Roles
@@ -561,9 +545,9 @@ class Database:
         # Validate table names to prevent SQL injection
         if not self._is_valid_table_name(table_name):
             raise ValueError("Invalid table name provided.")
-        
+
         audit_table_name = table_name+'_audit'
-        
+
         # Validate table names to prevent SQL injection
         is_audit_tablename_valid=not self._is_valid_table_name(audit_table_name)
         is_table_name_valid=not self._is_valid_table_name(table_name)
@@ -600,11 +584,33 @@ class Database:
             raise Exception(f"An error occurred while adding the audit trigger: {str(e)}")
 
     def _is_valid_table_name(self, table_name: str) -> bool:
-        """Validate table name against SQL injection."""
+        """Validate table name against SQL injection, reserved keywords, and special characters."""
+        # Ensure it is not empty or just spaces
+        if not table_name.strip():
+            self.logger.warning(f"Invalid table name attempted: '{table_name}' (empty or whitespace)")
+            return False
+
+        # Ensure it starts with a letter or underscore and only contains valid characters
         pattern = r"^[a-zA-Z_][a-zA-Z0-9_]*$"
         is_valid = match(pattern, table_name) is not None
+
+        # Check if table name is exactly a reserved keyword
+        if is_valid:
+            upper_table_name = table_name.upper()
+            if upper_table_name in self.RESERVED_KEYWORDS:
+                is_valid = False
+
+        # Ensure the name is not composed entirely of special characters
+        if is_valid and match(r"^[^a-zA-Z0-9]+$", table_name):
+            is_valid = False
+
+        # Ensure the name is not just underscores
+        if is_valid and all(char == '_' for char in table_name):
+            is_valid = False
+
         if not is_valid:
-            self.logger.warning(f"Invalid table name attempted: {table_name}")
+            self.logger.warning(f"Invalid table name attempted: '{table_name}'")
+
         return is_valid
     
     async def _disconnect_async(self):
@@ -673,14 +679,17 @@ class Datasource:
 
     def __init__(self, settings: DatasourceSettings, logger: Optional[Logger] = None):
         self.logger = logger or getLogger(__name__)
+        self.name = settings.name
+        self.description = settings.description
+        self.settings = settings
 
         self.databases = {}
-        for name, db_settings in settings.databases.items():
+        for database_settings in settings.databases:
             try:
                 # Initialize and validate database instance
-                self.databases[name] = Database(db_settings, self.logger)
+                self.databases[database_settings.name] = Database(database_settings)
             except ValidationError as e:
-                self.logger.error(f"Invalid configuration for database '{name}': {e}")
+                self.logger.error(f"Invalid configuration for database '{database_settings.name}': {e}")
 
     def get_database(self, name: str) -> Database:
         """Returns the database instance for the given name."""

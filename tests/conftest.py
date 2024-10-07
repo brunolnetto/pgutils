@@ -7,8 +7,8 @@ from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, AsyncSession
 
-from pgutils.core import Database, MultiDatasource
-from pgutils.models import DatabaseSettings
+from pgutils.core import Database, Datasource, MultiDatasource
+from pgutils.models import DatabaseSettings, DatasourceSettings
 from pgutils.testing import prepare_database
 
 DEFAULT_PORT=5433
@@ -32,7 +32,7 @@ def invalid_uri_config():
     }
 
 @pytest.fixture(scope="module")
-def multidatabase_settings():
+def databases_settings():
     settings_dict = {
         "sync": {
             "uri": f"postgresql+psycopg://postgres:postgres@localhost:{DEFAULT_PORT}/db1",
@@ -56,6 +56,31 @@ def multidatabase_settings():
     }
 
 @pytest.fixture(scope="module")
+def same_database_settings():
+    settings_dict = {
+        "sync": {
+            "uri": f"postgresql+psycopg://postgres:postgres@localhost:{DEFAULT_PORT}/db",
+            "admin_username": "postgres",
+            "admin_password": "postgres",
+            "async_mode": False,
+            "auto_create_db": True
+        },
+        "async": {
+            "uri": f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}/db",
+            "admin_username": "postgres",
+            "admin_password": "postgres",
+            "async_mode": True,
+            "auto_create_db": True
+        }
+    }
+    
+    return {
+        settings_name: DatabaseSettings(**settings_values)
+        for settings_name, settings_values in settings_dict.items()
+    }
+
+
+@pytest.fixture(scope="module")
 def sync_settings_without_auto_create():
     return DatabaseSettings(**{
         "uri": f"postgresql://postgres:postgres@localhost:{DEFAULT_PORT}/db_test",
@@ -70,26 +95,32 @@ def database_without_auto_create(sync_settings_without_auto_create):
     db = Database(sync_settings_without_auto_create)
     yield db
 
+@pytest.fixture(scope="function")
+def sync_database(databases_settings):
+    db = Database(databases_settings['sync'])
+    yield db
+
+@pytest.fixture(scope="function")
+def async_database(databases_settings):
+    db = Database(databases_settings['async'])
+    yield db
+
 @pytest.fixture(scope="module")
-def multidatabase(multidatabase_settings: Dict[str, DatabaseSettings]):
-    for settings_name, settings in multidatabase_settings.items():
-        prepare_database(ADMIN_SYNC_URL, str(settings.uri), settings.db_name)
+def datasource_settings(databases_settings: Dict[str, DatabaseSettings]):
+
+    # Create the DatasourceSettings fixture
+    return DatasourceSettings(
+        name="Datasource object",
+        databases=list(databases_settings.values()),
+        description="Datasource with both sync and async databases"
+    )
+
+@pytest.fixture(scope="module")
+def datasource(datasource_settings: DatasourceSettings):
+    for database in datasource_settings.databases:
+        prepare_database(str(database.admin_uri), str(database.uri), database.name)
     
-    return MultiDatasource(multidatabase_settings)
-
-
-@pytest.fixture(scope="function")
-def sync_database(multidatabase_settings):
-    sync_settings=multidatabase_settings['sync']
-    db = Database(sync_settings)
-    yield db
-
-
-@pytest.fixture(scope="function")
-def async_database(multidatabase_settings):
-    async_settings=multidatabase_settings['async']
-    db = Database(async_settings)
-    yield db
+    return Datasource(datasource_settings)
 
 @pytest.fixture(scope="module")
 def sync_db_engine():

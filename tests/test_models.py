@@ -21,7 +21,7 @@ def test_database_config_valid():
         admin_password='strongpassword'
     )
     
-    assert config.db_name == 'mydatabase'
+    assert config.name == 'mydatabase'
     assert str(config.admin_uri) == 'postgresql+psycopg2://admin:***@localhost:5432'
     assert str(config.complete_uri) == 'postgresql://user:***@localhost:5432/mydatabase'
 
@@ -159,7 +159,7 @@ def test_database_config_validation():
         admin_password="postgres",
         async_mode=True,
     )
-    assert valid_config.db_name == 'mydb'
+    assert valid_config.name == 'mydb'
     assert str(valid_config.admin_uri) == "postgresql+psycopg2://postgres:***@localhost:5432"
 
     # Invalid URI

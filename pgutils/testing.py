@@ -1,16 +1,16 @@
 from urllib.parse import urlparse, urlunparse
 
-from pydantic import ValidationError
+from pydantic import ValidationError, AnyUrl
 from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, AsyncSession
 
 
-def convert_to_sync_dsn(uri: str) -> str:
+def convert_to_sync_dsn(uri: AnyUrl) -> str:
     """
     Convert an async PostgreSQL URI to a sync PostgreSQL DSN (Data Source Name).
     """
-    parsed_uri = urlparse(uri)
+    parsed_uri = urlparse(str(uri))
     
     # Check if the URI is async, then replace with sync scheme
     if parsed_uri.scheme in ["postgresql+asyncpg"]:
@@ -95,10 +95,9 @@ def populate_database(uri: str, db_name: str):
         except Exception as e:
             print(f"Error during table operations: {e}")
 
-def prepare_database(admin_uri, data_uri, db_name):
+def prepare_database(admin_uri: AnyUrl, data_uri: AnyUrl, db_name):
     admin_uri = convert_to_sync_dsn(admin_uri)
     data_uri = convert_to_sync_dsn(data_uri)
 
     create_database(admin_uri, db_name)
     populate_database(data_uri, db_name)
-

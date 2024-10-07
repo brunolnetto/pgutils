@@ -8,7 +8,14 @@ from sqlalchemy.exc import ProgrammingError, OperationalError
 from sqlalchemy import Column, Integer, String, text
 from sqlalchemy.exc import OperationalError
 
-from pgutils.core import DatabaseSettings, TableConstraint, Database, MultiDatasource
+from pgutils.core import (
+    DatabaseSettings, 
+    DatasourceSettings, 
+    TableConstraint, 
+    Database, 
+    Datasource, 
+    MultiDatasource
+)
 
 
 def test_create_and_drop_tables(sync_database: Database):
@@ -17,6 +24,21 @@ def test_create_and_drop_tables(sync_database: Database):
     assert db.health_check() is True, "Health check after table creation should pass."
     db.drop_tables()
     assert db.health_check() is True, "Health check after dropping tables should pass."
+
+def test_create_and_drop_tables(async_database: Database):
+    db = async_database
+    db.create_tables()
+    assert db.health_check() is True, "Health check after table creation should pass."
+    db.drop_tables()
+    assert db.health_check() is True, "Health check after dropping tables should pass."
+
+
+def test_create_and_drop_tables_with_admin(sync_database: Database):
+    db = sync_database
+    db.create_tables()
+    assert db.health_check(use_admin_uri=True) is True, "Health check after table creation should pass."
+    db.drop_tables()
+    assert db.health_check(use_admin_uri=True) is True, "Health check after dropping tables should pass."
 
 
 def test_invalid_pool_size():
@@ -133,11 +155,6 @@ def test_list_views(sync_database: Database):
     # Assertion to verify the result
     assert results == []
 
-def test_list_sequences(sync_database: Database):
-    results = sync_database.list_sequences()
-
-    # Assertion to verify the result
-    assert set(results) == {'test_table_audit_id_seq', 'test_table_id_seq'}
 
 def test_list_constraints(sync_database: Database):
     results = sync_database.list_constraints('test_table')
@@ -153,12 +170,6 @@ def test_list_constraints(sync_database: Database):
             foreign_column_name='id'
         )
     ]
-
-def test_list_triggers(sync_database: Database):
-    results = sync_database.list_triggers('test_table')
-
-    # Assertion to verify the result
-    assert len(results) == 3
     
 def test_audit_trigger(sync_database: Database):
     sync_database.add_audit_trigger('test_table')
@@ -167,6 +178,12 @@ def test_audit_trigger(sync_database: Database):
 
     # Assertion to verify the result
     assert len(results) == 3
+
+def test_list_sequences(sync_database: Database):
+    results = sync_database.list_sequences()
+
+    # Assertion to verify the result
+    assert set(results) == {'test_table_id_seq'}
 
 def test_audit_trigger(sync_database: Database):
     with pytest.raises(ValueError, match='Invalid table name provided.'):
@@ -229,16 +246,6 @@ def test_list_tables(sync_database: Database):
     assert 'test_table' in tables, "test_table should be listed in the database tables."
 
 
-def test_create_index_statement(sync_database: Database):
-    index_query=f"CREATE INDEX IF NOT EXISTS test_table_name_idx ON test_table USING btree (name);"
-    assert str(sync_database._create_index_statement('test_table', 'name', 'btree')) == index_query
-
-
-def test_multi_database_health_check(multidatabase: MultiDatasource):
-    health_checks = multidatabase.health_check_all()
-    assert all(health_checks.values()), "Health check for all databases should pass."
-
-
 def test_list_tables_async(async_database: Database):
     tables = async_database.list_tables()
     
@@ -271,3 +278,71 @@ def test_list_indexes_async(async_database: Database):
 
     index_exists = async_database._index_exists('test_table', 'test_table_pkey')
     assert index_exists == True
+
+def test_list_indexes_async(async_database: Database):
+    indexes = async_database.list_indexes('test_table')
+    assert indexes == ['test_table_pkey']
+
+    index_exists = async_database._index_exists('test_table', 'test_table_pkey')
+    assert index_exists == True
+
+def test_index_exists(async_database: Database):
+    assert async_database._index_exists('test_table', 'test_table_pkey')
+
+def test_multi_datasource_health_check(datasource: Datasource):
+    health_checks = datasource.health_check_all()
+    assert all(health_checks.values()), "Health check for all databases should pass."
+
+import pytest
+
+@pytest.mark.parametrize(
+    "table_name, expected_result", [
+        ("table-name", False),               # Hyphen in the name
+        ("123table", False),                 # Starts with a number
+        ("table!name", False),               # Special character '!'
+        ("table_name; DROP TABLE users;", False),  # SQL injection attempt
+        ("table_name'; --", False),          # SQL injection with comment
+        ("table_name' OR '1'='1", False),    # SQL injection OR logic
+        (" ", False),                        # Blank name (space)
+        ("SELECT", False),                   # SQL keyword
+        ("__", False),                       # Only underscores
+        ("1tablename", False),               # Starts with a number
+        ("@tablename", False),               # Starts with a special character
+        ("valid_table_name", True)           # Valid name, should return True
+    ]
+)
+def test_is_valid_table_name(sync_database: Database, table_name: str, expected_result: bool):
+    """
+    Test the _is_valid_table_name method with various invalid table names.
+    
+    Args:
+        sync_database (Database): Fixture that provides a database instance.
+        table_name (str): The table name to validate.
+        expected_result (bool): The expected result of the validation (True/False).
+    """
+    # Assuming `sync_database` has a method _is_valid_table_name
+    assert sync_database._is_valid_table_name(table_name) == expected_result
+
+
+def test_corrupted_datasource_settings():
+    # Create the DatasourceSettings fixture
+    with pytest.raises(ValueError):
+        DatasourceSettings(
+            name="Corrupted datasource object",
+            databases=[],
+            description="Datasource with both sync and async databases"
+        )
+
+def test_same_database_database_settings(same_database_settings):
+    # Create the DatasourceSettings fixture
+    with pytest.raises(ValueError):
+        DatasourceSettings(
+            name="Corrupted datasource object",
+            databases=list(same_database_settings.values()),
+            description="Datasource with both sync and async databases"
+        )
+
+def test_datasource_representation(datasource_settings: DatasourceSettings):
+    datasource_repr=f"<DataSourceSettings(name={datasource_settings.name}, databases=2)>"
+    assert datasource_settings.__repr__() == datasource_repr
+

@@ -3,6 +3,7 @@ from typing import (
     Generator, AsyncGenerator, 
     Union, Optional
 )
+from urllib.parse import urlparse
 from typing_extensions import Self
 from pydantic import BaseModel, ValidationError, HttpUrl
 import re
@@ -48,7 +49,7 @@ class DatabaseSettings(BaseModel):
     auto_create_db: bool = Field(default=False)
 
     @property
-    def db_name(self) -> str:
+    def name(self) -> str:
         """Extracts the database name from the URI."""
         return self.uri.path.lstrip('/') if self.uri.path else None
 
@@ -85,40 +86,39 @@ class DatabaseSettings(BaseModel):
 class DatasourceSettings(BaseModel):
     """Configuration settings for a DataSource."""
     name: str
-    base_uri: AnyUrl                                    # Base URI for the data source
     databases: List[DatabaseSettings]                   # List of databases in the data source
     description: Optional[str] = None                   # Optional field for a description of the data source
     connection_timeout: int = Field(default=30, ge=0)   # Timeout for connections in seconds
     retry_attempts: int = Field(default=3, ge=0)        # Number of attempts to connect to the database
-    failover_strategy: Optional[str] = None             # Failover strategy, if any
 
     @field_validator('databases')
     def check_databases(cls, values):
         """Ensures that at least one database configuration is provided."""
-        databases = values.get('databases', [])
-        if not databases:
+        if not values:
             raise ValueError("At least one database must be defined in the data source.")
         return values
 
     @field_validator('databases')
-    def validate_databases(cls, values):
-        """Validates that all databases reference the base URI and have unique names."""
-        base_uri = values.get('base_uri')
-        databases = values.get('databases', [])
-        
+    def validate_databases(cls, databases: List[DatabaseSettings], info):
+        """Validates that all databases reference the base URI, have unique names,
+        valid driver names, and consistent localhost/port."""
         # Check for unique database names
         names = set()
+        parsed_uris = []
         for db in databases:
             if db.name in names:
                 raise ValueError(f"Database name '{db.name}' must be unique within the data source.")
             names.add(db.name)
-        
-        for db in databases:
-            # Ensure each database has the same base URI
-            if not db.complete_uri.startswith(str(base_uri)):
-                raise ValueError(f"Database '{db.name}' must reference the base URI '{base_uri}'.")
 
-        return values
+            # Parse the URI to check for driver, host, and port
+            parsed_uris.append((db.uri.host, db.uri.port))
+
+        # Ensure all databases have the same 
+        are_host_port_equal=len(set(parsed_uris)) != 1
+        if are_host_port_equal:
+            raise ValueError("All databases must have the same host and port.")
+
+        return databases
 
     def __repr__(self):
         return f"<DataSourceSettings(name={self.name}, databases={len(self.databases)})>"
