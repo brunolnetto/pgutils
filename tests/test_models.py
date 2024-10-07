@@ -7,9 +7,8 @@ from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, AsyncSession
 
-
-# Assuming the following imports based on your original code
-from pgutils.models import DatabaseSettings, ColumnIndex, TablePaginator
+from pgutils.exceptions import QueryValidationError
+from pgutils.models import DatabaseSettings, ColumnIndex, TablePaginator, QueryValidator
 from pgutils.constants import DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD
 from pgutils.testing import populate_database
 from .conftest import SYNC_DB_URL, DB_NAME
@@ -382,5 +381,38 @@ async def test_get_total_count_async(async_session_factory):
         # Assertion to verify the result
         assert total_count == 4
 
+def test_empty_query():
+    validator = QueryValidator("")
+    with pytest.raises(QueryValidationError, match="must contain SELECT and FROM"):
+        validator.validate()
+
+def test_missing_select():
+    validator = QueryValidator("FROM users")
+    with pytest.raises(QueryValidationError, match="must contain SELECT and FROM"):
+        validator.validate()
+
+def test_missing_from():
+    validator = QueryValidator("SELECT *")
+    with pytest.raises(QueryValidationError, match="must contain SELECT and FROM"):
+        validator.validate()
+
+def test_multiple_semicolons():
+    validator = QueryValidator("SELECT * FROM users;;")
+    with pytest.raises(QueryValidationError, match="contains multiple semicolons"):
+        validator.validate()
+
+def test_predefined_limit():
+    validator = QueryValidator("SELECT * FROM users LIMIT 10")
+    with pytest.raises(QueryValidationError, match="should not contain a predefined LIMIT clause"):
+        validator.validate()
+
+def test_predefined_offset():
+    validator = QueryValidator("SELECT * FROM users OFFSET 5")
+    with pytest.raises(QueryValidationError, match="should not contain a predefined OFFSET clause"):
+        validator.validate()
+
+def test_valid_query():
+    validator = QueryValidator("SELECT id, name FROM users")
+    assert validator.validate() is None
 
 
