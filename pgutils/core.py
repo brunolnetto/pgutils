@@ -683,7 +683,7 @@ class Datasource:
         self.description = settings.description
         self.settings = settings
 
-        self.databases = {}
+        self.databases: Dict[str, Database] = {}
         for database_settings in settings.databases:
             try:
                 # Initialize and validate database instance
@@ -743,9 +743,7 @@ class Datasource:
 
     def list_types(self, database_name: str):
         """List user-defined types from a specified database or from all databases."""
-        db=self.get_database(database_name)
-        print(db.list_types())
-        return db.list_types()
+        return self.get_database(database_name).list_types()
 
     def list_roles(self, database_name: str):
         """List roles from a specified database or from all databases."""
@@ -802,7 +800,7 @@ class MultiDatasource:
     def __init__(self, settings_dict: Dict[str, DatasourceSettings], logger: Optional[Logger] = None):
         self.logger = logger or getLogger(self.__class__.__name__)
 
-        self.datasources = {}
+        self.datasources: Dict[str, Datasource] = {}
         for name, settings in settings_dict.items():
             try:
                 # Initialize and validate datasource instance

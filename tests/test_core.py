@@ -183,8 +183,8 @@ def test_list_sequences(
     async_database: Database,
     datasource: Datasource
 ):
-    expected={'test_table_id_seq', 'test_table_audit_id_seq'}
-    
+    expected={'test_table_id_seq','test_table_audit_id_seq'}
+
     sync_results = sync_database.list_sequences()
     async_results = sync_database.list_sequences()
 
