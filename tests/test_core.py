@@ -171,6 +171,12 @@ def test_list_constraints(sync_database: Database):
         )
     ]
     
+def test_list_sequences(sync_database: Database):
+    results = sync_database.list_sequences()
+
+    # Assertion to verify the result
+    assert set(results) == {'test_table_id_seq', 'test_table_audit_id_seq'}
+
 def test_audit_trigger(sync_database: Database):
     sync_database.add_audit_trigger('test_table')
     
@@ -179,13 +185,7 @@ def test_audit_trigger(sync_database: Database):
     # Assertion to verify the result
     assert len(results) == 3
 
-def test_list_sequences(sync_database: Database):
-    results = sync_database.list_sequences()
-
-    # Assertion to verify the result
-    assert set(results) == {'test_table_id_seq'}
-
-def test_audit_trigger(sync_database: Database):
+def test_audit_trigger_with_error(sync_database: Database):
     with pytest.raises(ValueError, match='Invalid table name provided.'):
         sync_database.add_audit_trigger('invalid table name')
 
