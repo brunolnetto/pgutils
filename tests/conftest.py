@@ -7,11 +7,11 @@ from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, AsyncSession
 
-from pgutils.core import Database, MultiDatabase
+from pgutils.core import Database, MultiDatasource
 from pgutils.models import DatabaseSettings
 from pgutils.testing import prepare_database
 
-DEFAULT_PORT=5432
+DEFAULT_PORT=5433
 
 # Database configuration constants
 DB_NAME = "mydb"
@@ -75,7 +75,7 @@ def multidatabase(multidatabase_settings: Dict[str, DatabaseSettings]):
     for settings_name, settings in multidatabase_settings.items():
         prepare_database(ADMIN_SYNC_URL, str(settings.uri), settings.db_name)
     
-    return MultiDatabase(multidatabase_settings)
+    return MultiDatasource(multidatabase_settings)
 
 
 @pytest.fixture(scope="function")

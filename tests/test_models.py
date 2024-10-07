@@ -9,15 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, AsyncSessi
 
 
 # Assuming the following imports based on your original code
-from pgutils.models import DatabaseSettings, ColumnIndex, Paginator
-from pgutils.constants import (
-    DEFAULT_ADMIN_USERNAME,
-    DEFAULT_ADMIN_PASSWORD,
-)
+from pgutils.models import DatabaseSettings, ColumnIndex, TablePaginator
+from pgutils.constants import DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD
 from pgutils.testing import populate_database
-from .conftest import (
-    SYNC_DB_URL, DB_NAME,
-)
+from .conftest import SYNC_DB_URL, DB_NAME
 
 def test_database_config_valid():
     config = DatabaseSettings(
@@ -218,7 +213,7 @@ def test_validate_uri_scheme(uri, expect_exception):
 async def test_async_paginator(async_session_factory):
     # Initialize paginator with a query
     async for async_session in async_session_factory:
-        paginator = Paginator(
+        paginator = TablePaginator(
             async_session, 
             "SELECT name FROM public.test_table",
             batch_size=2
@@ -253,7 +248,7 @@ async def test_async_paginator_after_deleting_all_entries(async_session_factory)
         await async_session.commit()  # Commit the changes to apply deletion
 
         # Step 2: Prepare the paginator after deletion
-        paginator = Paginator(
+        paginator = TablePaginator(
             conn=async_session,
             query="SELECT * FROM test_table",
             batch_size=2
@@ -267,7 +262,7 @@ async def test_async_paginator_after_deleting_all_entries(async_session_factory)
 def test_paginator(sync_session_factory):
     # Initialize paginator with a query
     session = sync_session_factory()
-    paginator = Paginator(
+    paginator = TablePaginator(
         session, 
         "SELECT name FROM public.test_table",
         batch_size=2
@@ -293,7 +288,7 @@ def test_paginator(sync_session_factory):
 
 def test_paginator_with_params(sync_session_factory):
     session = sync_session_factory()
-    paginator = Paginator(
+    paginator = TablePaginator(
         session, 
         "SELECT name FROM public.test_table WHERE name LIKE :name", 
         params={'name': 'A%'}
@@ -307,10 +302,9 @@ def test_paginator_with_params(sync_session_factory):
     assert len(results) == 1  # Only 'Alice' matches the condition
     assert results[0] == ('Alice', )
 
-@pytest.mark.asyncio
-async def test_sync_paginator_batches(sync_session_factory):
+def test_sync_paginator_batches(sync_session_factory):
     session = sync_session_factory()
-    paginator = Paginator(
+    paginator = TablePaginator(
         conn=session,
         query="SELECT name FROM public.test_table",
         batch_size=2
@@ -328,7 +322,7 @@ def test_get_total_count(sync_session_factory):
     session=sync_session_factory()
 
     # Prepare the paginator
-    paginator = Paginator(
+    paginator = TablePaginator(
         conn=session,
         query="SELECT * FROM test_table",
         batch_size=2
@@ -336,8 +330,7 @@ def test_get_total_count(sync_session_factory):
     
     assert paginator._get_total_count() == 4
 
-@pytest.mark.asyncio
-async def test_sync_paginator_after_deleting_all_entries(sync_db_engine, sync_session_factory):
+def test_sync_paginator_after_deleting_all_entries(sync_db_engine, sync_session_factory):
     sync_session: Session = sync_session_factory()
     
     # Step 1: Delete all entries from the table
@@ -346,7 +339,7 @@ async def test_sync_paginator_after_deleting_all_entries(sync_db_engine, sync_se
     sync_session.commit()  # Commit the changes to apply deletion
 
     # Step 2: Prepare the paginator after deletion
-    paginator = Paginator(
+    paginator = TablePaginator(
         conn=sync_session,
         query="SELECT name FROM test_table",
         batch_size=2
@@ -362,7 +355,7 @@ def test_get_batch_query(sync_session_factory):
     session=sync_session_factory()
 
     # Prepare the paginator
-    paginator = Paginator(
+    paginator = TablePaginator(
         conn=session,
         query="SELECT * FROM test_table",
         batch_size=2
@@ -377,7 +370,7 @@ def test_get_batch_query(sync_session_factory):
 async def test_get_total_count_async(async_session_factory):
     async for async_session in async_session_factory:  # Use the session factory
         # Prepare the paginator
-        paginator = Paginator(
+        paginator = TablePaginator(
             conn=async_session,
             query="SELECT * FROM test_table",
             batch_size=2

@@ -4,7 +4,7 @@ from typing import (
     Union, Optional
 )
 from typing_extensions import Self
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError, HttpUrl
 import re
 
 from pydantic import (
@@ -35,40 +35,6 @@ from .constants import (
     VALID_SCHEMES,
     VALID_INDEX_TYPES,
 )
-
-
-class ColumnIndex(BaseModel):
-    type: str
-    table_name: str
-    columns: List[str]
-    expression: Optional[str] = None
-    condition: Optional[str] = None
-
-    @model_validator(mode='before')
-    def validate_index_type(self) -> Self:
-        index_type = self.get('type')
-
-        if index_type not in VALID_INDEX_TYPES:
-            raise ValueError(f"Index type must be one of {list(VALID_INDEX_TYPES.keys())}.")
-
-        return self
-
-    @model_validator(mode='before')
-    def validate_obj(self) -> Self:
-        index_type = self.get('type')
-        if index_type == 'expression' and 'expression' not in self.keys():
-            raise ValueError("Expression index must include 'expression'.")
-        if index_type == 'partial' and 'condition' not in self.keys():
-            raise ValueError("Partial index must include 'condition'.")
-
-        return self
-
-    @field_validator('columns')
-    def check_columns(cls, columns):        
-        if len(set(columns)) != len(columns):
-            raise ValueError("Index cannot have duplicate columns.")
-        
-        return columns
 
 
 class DatabaseSettings(BaseModel):
@@ -116,8 +82,7 @@ class DatabaseSettings(BaseModel):
         validate_postgresql_uri(str(value), allow_async=True)
         return value
 
-
-class DataSourceSettings(BaseModel):
+class DatasourceSettings(BaseModel):
     """Configuration settings for a DataSource."""
     name: str
     base_uri: AnyUrl                                    # Base URI for the data source
@@ -158,6 +123,39 @@ class DataSourceSettings(BaseModel):
     def __repr__(self):
         return f"<DataSourceSettings(name={self.name}, databases={len(self.databases)})>"
 
+class ColumnIndex(BaseModel):
+    type: str
+    table_name: str
+    columns: List[str]
+    expression: Optional[str] = None
+    condition: Optional[str] = None
+
+    @model_validator(mode='before')
+    def validate_index_type(self) -> Self:
+        index_type = self.get('type')
+
+        if index_type not in VALID_INDEX_TYPES:
+            raise ValueError(f"Index type must be one of {list(VALID_INDEX_TYPES.keys())}.")
+
+        return self
+
+    @model_validator(mode='before')
+    def validate_obj(self) -> Self:
+        index_type = self.get('type')
+        if index_type == 'expression' and 'expression' not in self.keys():
+            raise ValueError("Expression index must include 'expression'.")
+        if index_type == 'partial' and 'condition' not in self.keys():
+            raise ValueError("Partial index must include 'condition'.")
+
+        return self
+
+    @field_validator('columns')
+    def check_columns(cls, columns):        
+        if len(set(columns)) != len(columns):
+            raise ValueError("Index cannot have duplicate columns.")
+        
+        return columns
+
 
 class TableConstraint(BaseModel):
     constraint_name: str
@@ -166,9 +164,45 @@ class TableConstraint(BaseModel):
     column_name: Optional[str]
     foreign_table_name: Optional[str]
     foreign_column_name: Optional[str]
-    
 
-class Paginator:
+class Trigger(BaseModel):
+    trigger_catalog: str = Field(..., 
+        description="The catalog (database) where the trigger exists")
+    trigger_schema: str = Field(..., 
+        description="The schema where the trigger is defined")
+    trigger_name: str = Field(..., 
+        description="The name of the trigger")
+    event_manipulation: str = Field(..., 
+        description="The event that causes the trigger to fire, such as INSERT, DELETE, UPDATE")
+    event_object_catalog: str = Field(..., 
+        description="The catalog (database) where the table exists")
+    event_object_schema: str = Field(..., 
+        description="The schema where the table exists")
+    event_object_table: str = Field(..., 
+        description="The table associated with the trigger")
+    action_order: int = Field(..., 
+        description="The order in which trigger actions are executed")
+    action_condition: Optional[str] = Field(None, 
+        description="The condition under which the trigger fires")
+    action_statement: str = Field(..., 
+        description="The SQL statement executed when the trigger fires")
+    action_orientation: str = Field(..., 
+        description="Whether the trigger fires per row or per statement")
+    action_timing: str = Field(..., 
+        description="When the trigger fires relative to the event, such as BEFORE or AFTER")
+    action_reference_old_table: Optional[str] = Field(None, 
+        description="Used in INSTEAD OF triggers to reference an old table")
+    action_reference_new_table: Optional[str] = Field(None, 
+        description="Used in INSTEAD OF triggers to reference a new table")
+    action_reference_old_row: Optional[str] = Field(None, 
+        description="Used to reference the old row")
+    action_reference_new_row: Optional[str] = Field(None, 
+        description="Used to reference the new row")
+    created: Optional[str] = Field(None, 
+        description="The timestamp when the trigger was created")
+
+
+class TablePaginator:
     def __init__(
         self, 
         conn: Union[Session, AsyncSession, Connection, AsyncConnection],

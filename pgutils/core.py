@@ -18,7 +18,11 @@ from sqlalchemy.exc import (
     SQLAlchemyError
 )
 
-from .models import DatabaseSettings, TableConstraint, ColumnIndex, Paginator
+from .models import (
+    DatasourceSettings, 
+    DatabaseSettings, 
+    TableConstraint, Trigger, ColumnIndex, TablePaginator
+)
 from .utils import run_async_method, mask_sensitive_data
 from .constants import PAGINATION_BATCH_SIZE
 
@@ -50,11 +54,13 @@ class Database:
         self.logger.debug(f"Creating engine with URI: {uri_str}")
         engine = create_async_engine(
             uri_str,
+            isolation_level="AUTOCOMMIT",
             pool_size=self.config.pool_size,
             max_overflow=self.config.max_overflow,
             pool_pre_ping=True
         ) if self.async_mode else create_engine(
             uri_str,
+            isolation_level="AUTOCOMMIT",
             pool_size=self.config.pool_size,
             max_overflow=self.config.max_overflow,
             pool_pre_ping=True
@@ -75,35 +81,6 @@ class Database:
         """Create and return a sessionmaker for the database engine."""
         return sessionmaker(bind=self.engine, class_=AsyncSession, expire_on_commit=False) \
             if self.async_mode else sessionmaker(bind=self.engine)
-
-    def _get_parallel_queries(self):
-        """Return the list of queries for parallel configuration."""
-        return [
-            "SET max_parallel_workers = 8;",                 # Number of parallel workers allowed in total
-            "SET max_parallel_workers_per_gather = 4;",      # Number of workers allowed per query
-            "SET min_parallel_table_scan_size = '8MB';",     # Minimum table size for parallel scan
-            "SET min_parallel_index_scan_size = '512kB';"    # Minimum index size for parallel scan
-        ]
-
-    def set_parallel_queries_sync(self):
-        """Synchronous configuration for parallel queries."""
-        queries = self._get_parallel_queries()
-        for query in queries:
-            self._execute_query_sync(query)
-
-    async def set_parallel_queries_async(self):
-        """Asynchronous configuration for parallel queries."""
-        queries = self._get_parallel_queries()
-        for query in queries:
-            await self._execute_query_async(query)
-
-    def configure_parallel_queries(self):
-        """Configure PostgreSQL parallel query settings lazily."""
-        if self.async_mode:
-            # Detect and handle the async loop
-            run_async_method(self.set_parallel_queries_async)
-        else:
-            self.set_parallel_queries_sync()
 
     def check_database_exists(self, db_name: str = None):
         """Checks if the database exists."""
@@ -232,7 +209,7 @@ class Database:
 
     def _index_exists(self, table_name: str, index_name: str) -> bool:
         """Check if the index exists in the specified table, supporting both sync and async modes."""
-        return any(index == (index_name, ) for index in self.list_indexes(table_name))
+        return any(index == index_name for index in self.list_indexes(table_name))
 
     async def _execute_index_creation(
             self, 
@@ -372,7 +349,7 @@ class Database:
                 # Prepare and execute the query
                 query=text(query).bindparams(**params) if params else text(query)
                 result = await conn.execute(query)
-                return await result.fetchall()
+                return result.fetchall()
             except ResourceClosedError:
                     return []
 
@@ -402,25 +379,33 @@ class Database:
     # 1. List Tables
     def list_tables(self, table_schema: str = 'public'):
         sync_query = """
-            SELECT table_name 
+            SELECT table_name
             FROM information_schema.tables 
             WHERE table_schema = :table_schema;
         """
-        return self._execute_list_query(sync_query, {'table_schema': table_schema})
+        return [
+            table_tuple[0]
+            for table_tuple in self._execute_list_query(sync_query, {'table_schema': table_schema})
+        ]
 
     # 2. List Schemas
     def list_schemas(self):
         sync_query = "SELECT schema_name FROM information_schema.schemata;"
-        return self._execute_list_query(sync_query)
+        return [
+            schema_tuple[0] for schema_tuple in self._execute_list_query(sync_query)
+        ]
 
     # 3. List Indexes
     def list_indexes(self, table_name: str):
         sync_query = """
-            SELECT indexname 
-            FROM pg_indexes 
+            SELECT indexname FROM pg_indexes 
             WHERE tablename = :table_name;
         """
-        return self._execute_list_query(sync_query, {'table_name': table_name})
+
+        return [
+            index_tuple[0]
+            for index_tuple in self._execute_list_query(sync_query, {'table_name': table_name})
+        ]
 
     # 4. List Views
     def list_views(self, table_schema='public'):
@@ -429,12 +414,18 @@ class Database:
             FROM information_schema.views 
             WHERE table_schema = :table_schema;
         """
-        return self._execute_list_query(sync_query, {'table_schema': table_schema})
+        return [
+            views_tuple[0]
+            for views_tuple in self._execute_list_query(sync_query, {'table_schema': table_schema})
+        ]
 
     # 5. List Sequences
     def list_sequences(self):
         sync_query = "SELECT sequence_name FROM information_schema.sequences;"
-        return self._execute_list_query(sync_query)
+        return [
+            sequence_tuple[0]
+            for sequence_tuple in self._execute_list_query(sync_query)
+        ]
 
     # 6. List Constraints
     def list_constraints(self, table_name: str, table_schema: str = 'public') -> List[TableConstraint]:
@@ -457,19 +448,34 @@ class Database:
             WHERE tc.table_name = :table_name
                 AND tc.table_schema = :table_schema;
         """
-        return self._execute_list_query(sync_query, {
+        return [
+            TableConstraint(
+                constraint_name=constraint_name,
+                constraint_type=constraint_type,
+                table_name=table_name,
+                column_name=column_name,
+                foreign_table_name=table_name,
+                foreign_column_name=column_name
+            ) for constraint_name, constraint_type, table_name, 
+            column_name, table_name, column_name
+            in self._execute_list_query(sync_query, {
             'table_schema': table_schema,
             'table_name': table_name
-        })
+            })
+        ]
 
     # 7. List Triggers
     def list_triggers(self, table_name: str):
         sync_query = """
-            SELECT trigger_name 
+            SELECT * 
             FROM information_schema.triggers 
             WHERE event_object_table = :table_name;
         """
-        return self._execute_list_query(sync_query, {'table_name': table_name})
+        columns = self.list_columns('triggers', 'information_schema')
+        return [
+            Trigger(**dict(zip(columns, trigger_info)))
+            for trigger_info in self._execute_list_query(sync_query, {'table_name': table_name})
+        ]
 
     # 8. List Functions
     def list_functions(self):
@@ -482,39 +488,33 @@ class Database:
     # 9. List Procedures
     def list_procedures(self):
         sync_query = """
-            SELECT routine_name 
-            FROM information_schema.routines 
-            WHERE routine_type = 'PROCEDURE';
+            SELECT routine_name FROM information_schema.routines WHERE routine_type = 'PROCEDURE';
         """
         return self._execute_list_query(sync_query)
 
     # 10. List Materialized Views
     def list_materialized_views(self):
-        sync_query = """
-            SELECT matviewname 
-            FROM pg_matviews;
-        """
+        sync_query = "SELECT matviewname FROM pg_matviews;"
         return self._execute_list_query(sync_query)
 
     # 11. List Columns
     def list_columns(self, table_name: str, table_schema: str = 'public'):
         sync_query = """
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE 
-                table_schema = :table_schema and
-                table_name = :table_name;
+            SELECT column_name FROM information_schema.columns 
+            WHERE table_schema = :table_schema and table_name = :table_name;
         """
-        return self._execute_list_query(sync_query, {
-            'table_schema': table_schema,
-            'table_name': table_name
-        })
+        return [
+            column_tuple[0]
+            for column_tuple in self._execute_list_query(sync_query, {
+                'table_schema': table_schema,
+                'table_name': table_name
+            })
+        ]
 
     # 12. List User-Defined Types
     def list_types(self):
         sync_query = """
-            SELECT typname 
-            FROM pg_type 
+            SELECT typname FROM pg_type 
             WHERE typtype = 'e';  -- Only enumerated types
         """
         return self._execute_list_query(sync_query)
@@ -554,9 +554,16 @@ class Database:
             run_async_method(_drop_tables_async)  # Pass the function reference
         else:
             _drop_tables_sync()
-            
-    async def add_audit_trigger(self, audit_table_name: str, table_name: str):
+
+    def add_audit_trigger(self, table_name: str):
         """Add an audit trigger to the specified table."""
+        
+        # Validate table names to prevent SQL injection
+        if not self._is_valid_table_name(table_name):
+            raise ValueError("Invalid table name provided.")
+        
+        audit_table_name = table_name+'_audit'
+        
         # Validate table names to prevent SQL injection
         is_audit_tablename_valid=not self._is_valid_table_name(audit_table_name)
         is_table_name_valid=not self._is_valid_table_name(table_name)
@@ -565,7 +572,7 @@ class Database:
             raise ValueError("Invalid table name provided.")
 
         # Prepare queries
-        create_audit_table_query = f"""
+        audit_table_query = f"""
             CREATE TABLE IF NOT EXISTS {audit_table_name} (
                 id SERIAL PRIMARY KEY,
                 table_name TEXT NOT NULL,
@@ -574,9 +581,6 @@ class Database:
                 new_data JSONB,
                 changed_at TIMESTAMP DEFAULT NOW()
             );
-        """
-
-        create_trigger_function_query = f"""
             CREATE OR REPLACE FUNCTION log_changes() RETURNS TRIGGER AS $$
             BEGIN
                 INSERT INTO {audit_table_name} (table_name, operation, old_data, new_data, changed_at)
@@ -584,19 +588,14 @@ class Database:
                 RETURN NEW;
             END;
             $$ LANGUAGE plpgsql;
-        """
-
-        create_trigger_query = f"""
             CREATE TRIGGER {table_name}_audit_trigger
             AFTER INSERT OR UPDATE OR DELETE ON {table_name}
             FOR EACH ROW EXECUTE FUNCTION log_changes();
-        """
+        """        
 
         # Execute queries
         try:
-            await self._execute_query_async(create_audit_table_query)
-            await self._execute_query_async(create_trigger_function_query)
-            await self._execute_query_async(create_trigger_query)
+            self.query(audit_table_query)
         except SQLAlchemyError as e:
             raise Exception(f"An error occurred while adding the audit trigger: {str(e)}")
 
@@ -607,6 +606,14 @@ class Database:
         if not is_valid:
             self.logger.warning(f"Invalid table name attempted: {table_name}")
         return is_valid
+    
+    async def _disconnect_async(self):
+        """Asynchronously cleans up and closes the database connections."""
+        await self.engine.dispose()
+
+    def _disconnect_sync(self):
+        """Synchronously cleans up and closes the database connections."""
+        self.engine.dispose()
 
     def disconnect(self):
         """Cleans up and closes the database connections, synchronous or asynchronously."""
@@ -615,14 +622,6 @@ class Database:
             run_async_method(self._disconnect_async)
         else:
             self._disconnect_sync()
-
-    async def _disconnect_async(self):
-        """Asynchronously cleans up and closes the database connections."""
-        await self.engine.dispose()
-
-    def _disconnect_sync(self):
-        """Synchronously cleans up and closes the database connections."""
-        self.engine.dispose()
 
     def query(self, query: str, params: Optional[Dict[str, Any]] = None) -> List[Any]:
         """Unified method to execute queries synchronously or asynchronously."""
@@ -642,7 +641,7 @@ class Database:
         batch_size: int = PAGINATION_BATCH_SIZE
     ) -> Generator[List[Any], None, None]:
         """Unified paginate interface for synchronous and asynchronous queries."""
-        paginator = Paginator(query, params, batch_size)
+        paginator = TablePaginator(query, params, batch_size)
 
         try:
             if self.async_mode:
@@ -659,13 +658,12 @@ class Database:
     def __repr__(self):
         return f"<Database(uri={mask_sensitive_data(self.uri)}, async_mode={self.async_mode})>"
 
-
-class MultiDatabase:
+class Datasource:
     """
     Manages multiple Database instances.
 
     Args:
-        settings_dict (Dict[str, DatabaseSettings]): A dictionary containing database names and their settings.
+        settings (DatasourceSettings): Settings containing all database configurations.
         logger (Optional[Logger]): Logger for logging information and errors. Defaults to a logger with the class name.
 
     Attributes:
@@ -673,14 +671,14 @@ class MultiDatabase:
         databases (Dict[str, Database]): Dictionary of initialized database instances.
     """
 
-    def __init__(self, settings_dict: Dict[str, DatabaseSettings], logger: Optional[Logger] = None):
+    def __init__(self, settings: DatasourceSettings, logger: Optional[Logger] = None):
         self.logger = logger or getLogger(__name__)
 
         self.databases = {}
-        for name, settings in settings_dict.items():
+        for name, db_settings in settings.databases.items():
             try:
                 # Initialize and validate database instance
-                self.databases[name] = Database(settings, self.logger)
+                self.databases[name] = Database(db_settings, self.logger)
             except ValidationError as e:
                 self.logger.error(f"Invalid configuration for database '{name}': {e}")
 
@@ -693,7 +691,7 @@ class MultiDatabase:
     def health_check_all(self) -> Dict[str, bool]:
         """
         Performs health checks on all databases.
-        
+
         Returns:
             A dictionary with database names as keys and the result of the health check (True/False) as values.
         """
@@ -718,6 +716,60 @@ class MultiDatabase:
         for db in self.databases.values():
             db.disconnect()
 
+class MultiDatasource:
+    """
+    Manages multiple Datasource instances.
+
+    Args:
+        settings_dict (Dict[str, DatasourceSettings]): A dictionary containing datasource names and their settings.
+        logger (Optional[Logger]): Logger for logging information and errors. Defaults to a logger with the class name.
+
+    Attributes:
+        logger (Logger): Logger used for logging.
+        datasources (Dict[str, Datasource]): Dictionary of initialized datasource instances.
+    """
+
+    def __init__(self, settings_dict: Dict[str, DatasourceSettings], logger: Optional[Logger] = None):
+        self.logger = logger or getLogger(self.__class__.__name__)
+
+        self.datasources = {}
+        for name, settings in settings_dict.items():
+            try:
+                # Initialize and validate datasource instance
+                self.datasources[name] = Datasource(settings, self.logger)
+            except ValidationError as e:
+                self.logger.error(f"Invalid configuration for datasource '{name}': {e}")
+
+    def get_datasource(self, name: str) -> Datasource:
+        """Returns the datasource instance for the given name."""
+        if name not in self.datasources:
+            raise KeyError(f"Datasource '{name}' not found.")
+        return self.datasources[name]
+
+    def health_check_all(self) -> Dict[str, Dict[str, bool]]:
+        """
+        Performs health checks on all datasources.
+
+        Returns:
+            A dictionary with datasource names as keys and a dictionary of their databases' health check results.
+        """
+        results = {}
+        for name, datasource in self.datasources.items():
+            self.logger.info(f"Starting health check for datasource '{name}'")
+            results[name] = datasource.health_check_all()
+            self.logger.info(f"Health check for datasource '{name}' completed.")
+        return results
+
+    def create_tables_all(self):
+        """Creates tables for all datasources."""
+        for datasource in self.datasources.values():
+            datasource.create_tables_all()
+
+    def disconnect_all(self):
+        """Disconnects all datasources."""
+        for datasource in self.datasources.values():
+            datasource.disconnect_all()
+
     @asynccontextmanager
     async def async_context(self):
         """
@@ -739,4 +791,4 @@ class MultiDatabase:
             self.disconnect_all()
 
     def __repr__(self):
-        return f"<MultiDatabase(databases={list(self.databases.keys())})>"
+        return f"<MultiDatasource(datasources={list(self.datasources.keys())})>"

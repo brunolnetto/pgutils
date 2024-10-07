@@ -8,7 +8,7 @@ from sqlalchemy.exc import ProgrammingError, OperationalError
 from sqlalchemy import Column, Integer, String, text
 from sqlalchemy.exc import OperationalError
 
-from pgutils.core import DatabaseSettings, Database, MultiDatabase
+from pgutils.core import DatabaseSettings, TableConstraint, Database, MultiDatasource
 
 
 def test_create_and_drop_tables(sync_database: Database):
@@ -69,15 +69,6 @@ def test_check_database_doesnt_exist(database_without_auto_create):
 #    assert db_exists == True
 
 
-def test_get_parallel_queries(database_without_auto_create):
-    queries=database_without_auto_create._get_parallel_queries()
-    assert queries == [
-        "SET max_parallel_workers = 8;",
-        "SET max_parallel_workers_per_gather = 4;",
-        "SET min_parallel_table_scan_size = '8MB';",
-        "SET min_parallel_index_scan_size = '512kB';"    
-    ]
-
 def test_repr(sync_database: Database):
     database_repr = str(sync_database)
     assert "***" in database_repr, "Sensitive data should be masked."
@@ -100,17 +91,29 @@ def test_paginate_sync(sync_database: Database):
         # Assertion to verify the result
         assert len(results) == 2
 
-def test_query(sync_database: Database):
+def test_query_sync(sync_database: Database):
     results = sync_database.query( "SELECT * FROM test_table")
 
     # Assertion to verify the result
     assert len(results) == 4
 
-def test_list_columns(sync_database: Database):
+def test_query_async(async_database: Database):
+    results = async_database.query( "SELECT * FROM test_table")
+
+    # Assertion to verify the result
+    assert len(results) == 4
+
+def test_list_columns_sync(sync_database: Database):
     results = sync_database.list_columns('test_table')
 
     # Assertion to verify the result
-    assert results == [('id', ), ('name', )]
+    assert results == ['id', 'name']
+
+def test_list_columns_async(async_database: Database):
+    results = async_database.list_columns('test_table')
+
+    # Assertion to verify the result
+    assert results == ['id', 'name']
 
 def test_columns_exist_sync(sync_database: Database):
     assert sync_database.column_exists('test_table', 'name')
@@ -122,12 +125,7 @@ def test_list_schemas(sync_database: Database):
     results = sync_database.list_schemas()
     
     # Assertion to verify the result
-    assert results == [
-        ('pg_toast', ), 
-        ('pg_catalog', ), 
-        ('public', ), 
-        ('information_schema', )
-    ]
+    assert results == [ 'pg_toast', 'pg_catalog', 'public', 'information_schema' ]
 
 def test_list_views(sync_database: Database):
     results = sync_database.list_views('public')
@@ -139,19 +137,40 @@ def test_list_sequences(sync_database: Database):
     results = sync_database.list_sequences()
 
     # Assertion to verify the result
-    assert results == [('test_table_id_seq', )]
+    assert set(results) == {'test_table_audit_id_seq', 'test_table_id_seq'}
 
 def test_list_constraints(sync_database: Database):
     results = sync_database.list_constraints('test_table')
-    print(results)
+
     # Assertion to verify the result
-    assert results == [('test_table_pkey', 'PRIMARY KEY', 'test_table', 'id', 'test_table', 'id')]
+    assert results == [
+        TableConstraint(
+            constraint_name='test_table_pkey', 
+            constraint_type='PRIMARY KEY', 
+            table_name='test_table', 
+            column_name='id', 
+            foreign_table_name='test_table', 
+            foreign_column_name='id'
+        )
+    ]
 
 def test_list_triggers(sync_database: Database):
     results = sync_database.list_triggers('test_table')
 
     # Assertion to verify the result
-    assert results == []
+    assert len(results) == 3
+    
+def test_audit_trigger(sync_database: Database):
+    sync_database.add_audit_trigger('test_table')
+    
+    results = sync_database.list_triggers('test_table')
+
+    # Assertion to verify the result
+    assert len(results) == 3
+
+def test_audit_trigger(sync_database: Database):
+    with pytest.raises(ValueError, match='Invalid table name provided.'):
+        sync_database.add_audit_trigger('invalid table name')
 
 def test_list_functions(sync_database: Database):
     results = sync_database.list_functions()
@@ -207,7 +226,7 @@ def test_list_tables(sync_database: Database):
     
     tables = sync_database.list_tables()
     
-    assert ('test_table', ) in tables, "test_table should be listed in the database tables."
+    assert 'test_table' in tables, "test_table should be listed in the database tables."
 
 
 def test_create_index_statement(sync_database: Database):
@@ -215,7 +234,7 @@ def test_create_index_statement(sync_database: Database):
     assert str(sync_database._create_index_statement('test_table', 'name', 'btree')) == index_query
 
 
-def test_multi_database_health_check(multidatabase: MultiDatabase):
+def test_multi_database_health_check(multidatabase: MultiDatasource):
     health_checks = multidatabase.health_check_all()
     assert all(health_checks.values()), "Health check for all databases should pass."
 
@@ -223,32 +242,17 @@ def test_multi_database_health_check(multidatabase: MultiDatabase):
 def test_list_tables_async(async_database: Database):
     tables = async_database.list_tables()
     
-    assert tables == [('test_table', )]
+    assert tables == [ 'test_table' ]
 
 def test_list_schemas_sync(sync_database: Database):
     schemas = sync_database.list_schemas()
-    assert schemas == [
-        ('pg_toast', ), 
-        ('pg_catalog', ), 
-        ('public', ), 
-        ('information_schema', )
-    ]
+    assert schemas == [ 'pg_toast', 'pg_catalog', 'public', 'information_schema' ]
 
 def test_list_schemas_async(async_database: Database):
     schemas = async_database.list_schemas()
 
-    assert schemas == [
-        ('pg_toast', ), 
-        ('pg_catalog', ), 
-        ('public',), 
-        ('information_schema',)
-    ]
+    assert schemas == [ 'pg_toast', 'pg_catalog', 'public', 'information_schema' ]
 
-
-def test_list_triggers_sync(sync_database: Database):
-    triggers = sync_database.list_triggers('test_table')
-
-    assert triggers == []
 
 def test_list_triggers_async(async_database: Database):
     triggers = async_database.list_triggers('test_table')
@@ -257,13 +261,13 @@ def test_list_triggers_async(async_database: Database):
 
 def test_list_indexes_sync(sync_database: Database):
     indexes = sync_database.list_indexes('test_table')
-    assert indexes == [('test_table_pkey', )]
+    assert indexes == ['test_table_pkey']
     index_exists = sync_database._index_exists('test_table', 'test_table_pkey')
     assert index_exists == True
 
 def test_list_indexes_async(async_database: Database):
     indexes = async_database.list_indexes('test_table')
-    assert indexes == [('test_table_pkey', )]
+    assert indexes == ['test_table_pkey']
 
     index_exists = async_database._index_exists('test_table', 'test_table_pkey')
     assert index_exists == True
