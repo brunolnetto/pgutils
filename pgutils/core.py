@@ -303,9 +303,7 @@ class Database:
             rows = conn_result.fetchall()
             
             # Extract results
-            result = [row for row in rows]
-            
-            return list(rows)
+            return [row for row in rows]
 
     async def async_query_method(self, query: str, params: Dict):
         """Helper method for running async queries."""
@@ -556,7 +554,7 @@ class Database:
             raise ValueError("Invalid table name provided.")
 
         # Prepare queries
-        audit_table_query = f"""
+        create_table_query = f"""
             CREATE TABLE IF NOT EXISTS {audit_table_name} (
                 id SERIAL PRIMARY KEY,
                 table_name TEXT NOT NULL,
@@ -565,21 +563,27 @@ class Database:
                 new_data JSONB,
                 changed_at TIMESTAMP DEFAULT NOW()
             );
+        """
+        create_function_query = f"""
             CREATE OR REPLACE FUNCTION log_changes() RETURNS TRIGGER AS $$
             BEGIN
-                INSERT INTO {audit_table_name} (table_name, operation, old_data, new_data, changed_at)
-                VALUES (TG_TABLE_NAME, TG_OP, row_to_json(OLD), row_to_json(NEW), NOW());
-                RETURN NEW;
+            INSERT INTO {audit_table_name} (table_name, operation, old_data, new_data, changed_at)
+            VALUES (TG_TABLE_NAME, TG_OP, row_to_json(OLD), row_to_json(NEW), NOW());
+            RETURN NEW;
             END;
             $$ LANGUAGE plpgsql;
+        """
+        create_trigger_query = f"""
             CREATE TRIGGER {table_name}_audit_trigger
             AFTER INSERT OR UPDATE OR DELETE ON {table_name}
             FOR EACH ROW EXECUTE FUNCTION log_changes();
-        """        
+        """
 
         # Execute queries
         try:
-            self.query(audit_table_query)
+            self.query(create_table_query)
+            self.query(create_function_query)
+            self.query(create_trigger_query)
         except SQLAlchemyError as e:
             raise Exception(f"An error occurred while adding the audit trigger: {str(e)}")
 
@@ -697,7 +701,7 @@ class Datasource:
         """List tables from a specified database or from all databases."""
         return self.get_database(database_name).list_tables(table_schema)
 
-    def list_indexes(self, database_name: str, table_name: str):
+    def list_schemas(self, database_name: str):
         """List indexes for a table in a specified database or across all databases."""
         return self.get_database(database_name).list_schemas()
 
@@ -707,12 +711,15 @@ class Datasource:
 
     def list_views(self, database_name: str, table_schema: str):
         """List views from a specified database or from all databases."""
+        return self.get_database(database_name).list_views(table_schema)
 
     def list_sequences(self, database_name: str):
         """List sequences from a specified database or from all databases."""
+        return self.get_database(database_name).list_sequences()
 
     def list_constraints(self, database_name: str, table_schema: str, table_name: str):
         """List constraints for a table in a specified database or across all databases."""
+        return self.get_database(database_name).list_constraints(table_name, table_schema=table_schema)
 
     def list_triggers(self, database_name: str, table_name: str):
         """List triggers for a table in a specified database or across all databases."""
@@ -736,7 +743,9 @@ class Datasource:
 
     def list_types(self, database_name: str):
         """List user-defined types from a specified database or from all databases."""
-        return self.get_database(database_name).list_types()
+        db=self.get_database(database_name)
+        print(db.list_types())
+        return db.list_types()
 
     def list_roles(self, database_name: str):
         """List roles from a specified database or from all databases."""
@@ -773,6 +782,9 @@ class Datasource:
         """Disconnects all databases."""
         for db in self.databases.values():
             db.disconnect()
+            
+    def __getitem__(self, database_name: str):
+        return self.get_database(database_name)
 
 class MultiDatasource:
     """
