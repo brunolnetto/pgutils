@@ -1,7 +1,9 @@
 import asyncio
 from typing import Any
+from pydantic import AnyUrl
 
-from sqlalchemy.engine.url import make_url
+from sqlalchemy.engine.url import make_url, URL
+
 from .constants import VALID_SCHEMES, VALID_SYNC_SCHEMES
 
 def validate_postgresql_uri(uri: str, allow_async: bool = False):
@@ -39,18 +41,30 @@ def validate_postgresql_uri(uri: str, allow_async: bool = False):
 def run_async_method(async_method, *args, **kwargs) -> Any:
     """Run an arbitrary asynchronous method in an agnostic way."""
     try:
-        # Attempt to get the current event loop
+        # Get the current event loop (should be the same in pytest)
         loop = asyncio.get_event_loop()
-    except RuntimeError:  # No current event loop
-        # Create a new event loop
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        
+        if loop.is_running():
+            # If the event loop is running, create a task for it
+            return asyncio.ensure_future(async_method(*args, **kwargs))
+        else:
+            # If no running loop, use asyncio.run for synchronous environments
+            return loop.run_until_complete(async_method(*args, **kwargs))
+    except RuntimeError:
+        # If there's no event loop and you aren't testing, raise an error or use asyncio.run
+        return asyncio.run(async_method(*args, **kwargs))
 
-    if loop.is_running():
-        # Create a task if the loop is running
-        task = loop.create_task(async_method(*args, **kwargs))
-        return task  # Optionally return the task
-    else:
-        # No running loop, use asyncio.run safely
-        return loop.run_until_complete(async_method(*args, **kwargs))
 
+def mask_sensitive_data(uri: URL) -> str:
+    return str(uri._replace(password="******", username="******"))
+
+def construct_uri(
+    drivername: str, 
+    username: str, 
+    password: str, 
+    host: str, 
+    port: int, 
+    database: str
+) -> AnyUrl:
+        """Constructs a PostgreSQL URI from the provided components."""
+        return make_url(f"{drivername}://{username}:{password}@{host}:{port}/{database}")

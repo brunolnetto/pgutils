@@ -58,6 +58,15 @@ clean-test: # remove test and coverage artifacts
 clean-cache: # remove test and coverage artifacts
 	find . -name '*pycache*' -exec rm -rf {} +
 
+search: ## Searchs for a token in the code. Usage: make search token=your_token
+	grep -rnw . --exclude-dir=venv --exclude-dir=.git --exclude=poetry.lock -e "$(token)"
+
+replace: ## Replaces a token in the code. Usage: make replace token=your_token
+	sed -i 's/$(token)/$(new_token)/g' $$(grep -rl "$(token)" . \
+		--exclude-dir=venv \
+		--exclude-dir=.git \
+		--exclude=poetry.lock)
+
 test: ## run tests quickly with the default Python
 	poetry shell
 	pytest
@@ -69,7 +78,7 @@ watch-test: ## run tests on watchdog mode
 lint: clean ## perform inplace lint fixes
 	ruff check --fix .
 
-cov: clean ## check code coverage quickly with the default Python
+cov: clean ##
 	coverage run --source "$$PACKAGE_NAME" --omit "tests/*,*/__init__.py" -m pytest
 	coverage report -m
 

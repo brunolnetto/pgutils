@@ -2,7 +2,12 @@ import pytest
 import asyncio
 from unittest.mock import patch
 
-from pgutils.utils import validate_postgresql_uri, run_async_method
+from pgutils.core import Database
+from pgutils.utils import (
+    validate_postgresql_uri, 
+    run_async_method, 
+    mask_sensitive_data,
+)
 
 # Test valid URIs for psycopg
 @pytest.mark.parametrize("valid_psycopg_uri", [
@@ -148,7 +153,22 @@ def test_run_async_method_no_event_loop():
     with patch('asyncio.get_event_loop', side_effect=RuntimeError("No current event loop")):
         result = run_async_method(sample_async_method)
         assert result == 42  # Check if the result is as expected
-        
+
+@pytest.mark.asyncio
+async def test_run_async_method_running_loop():
+    async def sample_async_method(x):
+        return x * 2
+    
+    result = await run_async_method(sample_async_method, 5)
+    assert result == 10
+
+def test_run_async_method_no_loop():
+    async def sample_async_method(x):
+        return x * 2
+    
+    result = run_async_method(sample_async_method, 5)
+    assert result == 10
+
 def test_missing_username():
     # Case 1: Missing username but password is provided
     uri = "postgresql://:password@localhost/dbname"
@@ -170,3 +190,7 @@ def test_no_username_or_password():
     # Case 4: Neither username nor password is provided
     uri = "postgresql://localhost/dbname"
     assert validate_postgresql_uri(uri) == uri
+
+def test_mask_sensitive_data(sync_database: Database):
+    masked_uri = mask_sensitive_data(sync_database.uri)
+    assert "***" in masked_uri, "Sensitive data should be masked."
