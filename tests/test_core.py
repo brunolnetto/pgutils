@@ -293,7 +293,12 @@ def test_multi_datasource_health_check(datasource: Datasource):
     health_checks = datasource.health_check_all()
     assert all(health_checks.values()), "Health check for all databases should pass."
 
-import pytest
+def test_multi_datasource_get_database(
+    datasource: Datasource, 
+    datasource_settings: Dict[str, DatasourceSettings]
+):
+    gotten_database: Database = datasource.get_database('db1')
+    assert gotten_database.name == 'db1', "Health check for all databases should pass."
 
 @pytest.mark.parametrize(
     "table_name, expected_result", [
