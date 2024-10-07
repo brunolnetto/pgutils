@@ -58,6 +58,15 @@ clean-test: # remove test and coverage artifacts
 clean-cache: # remove test and coverage artifacts
 	find . -name '*pycache*' -exec rm -rf {} +
 
+search: ## Searchs for a token in the code. Usage: make search token=your_token
+	grep -rnw . --exclude-dir=venv --exclude-dir=.git --exclude=poetry.lock -e "$(token)"
+
+replace: ## Replaces a token in the code. Usage: make replace token=your_token
+	sed -i 's/$(token)/$(new_token)/g' $$(grep -rl "$(token)" . \
+		--exclude-dir=venv \
+		--exclude-dir=.git \
+		--exclude=poetry.lock)
+
 test: ## run tests quickly with the default Python
 	poetry shell
 	pytest
