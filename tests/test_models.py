@@ -326,7 +326,7 @@ def test_get_total_count(sync_session_factory):
     
     assert paginator._get_total_count() == 4
 
-def test_sync_paginator_after_deleting_all_entries(sync_db_engine, sync_session_factory):n
+def test_sync_paginator_after_deleting_all_entries(sync_db_engine, sync_session_factory):
     sync_session: Session = sync_session_factory()
     
     # Step 1: Delete all entries from the table
