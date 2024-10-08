@@ -1,20 +1,15 @@
 import pytest
-import asyncio
 from pydantic import ValidationError
 from typing import Dict
-from unittest.mock import patch, MagicMock
 
-from sqlalchemy.exc import ProgrammingError, OperationalError
-from sqlalchemy import Column, Integer, String, text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy import Column, Integer, String
 
 from pgutils.core import (
     DatabaseSettings, 
     DatasourceSettings, 
     TableConstraint, 
     Database, 
-    Datasource, 
-    MultiDatasource
+    Datasource
 )
 
 

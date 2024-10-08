@@ -2,14 +2,12 @@ from contextlib import contextmanager, asynccontextmanager
 from typing import Union, List, Any, Generator, AsyncGenerator, Dict, Optional
 
 from logging import getLogger, Logger 
-import re
 from re import match
-import asyncio
 
-from pydantic import ValidationError, TypeAdapter
+from pydantic import ValidationError
 from sqlalchemy import DDL
 from sqlalchemy import create_engine, text, inspect
-from sqlalchemy.engine.url import make_url, URL
+from sqlalchemy.engine.url import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import Session, sessionmaker, declarative_base
 from sqlalchemy.exc import (
@@ -148,7 +146,7 @@ class Database:
         """Check if the specified columns exist in the table asynchronously."""
         async with self.get_session() as session:
             query=text(
-                f"""
+                """
                 SELECT column_name
                 FROM information_schema.columns
                 WHERE table_name = :table_name
