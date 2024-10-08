@@ -2,7 +2,7 @@ import pytest
 import asyncio
 import random
 from typing import List, Any, Dict
-from unittest.mock import AsyncMock, MagicMock, patch, create_autospec
+from unittest.mock import MagicMock, patch, create_autospec
 
 import factory
 from pydantic import ValidationError, AnyUrl
@@ -224,7 +224,7 @@ def create_mocked_data_cluster():
 
     # Mock methods for each datasource
     for ds in data_cluster.datasources.values():
-        ds.disconnect_all = AsyncMock()
+        ds.disconnect_all = MagicMock()
         ds.create_tables_all = MagicMock()
 
     return data_cluster

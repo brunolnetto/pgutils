@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager, contextmanager
 from unittest.mock import MagicMock, patch
 from pydantic import ValidationError
 from typing import Dict
+import tracemalloc
 
 from sqlalchemy import Column, Integer, String
 
@@ -20,6 +21,8 @@ from .conftest import (
     DatabaseSettingsFactory
 )
 
+
+tracemalloc.start()
 
 def test_create_and_drop_tables(sync_database: Database):
     db = sync_database
@@ -557,5 +560,6 @@ def test_sync_context(mock_data_cluster, mock_logger):
     assert mock_logger.info.call_count >= 1  # Logging happens in disconnect_all
     assert "Disconnecting all datasources at the end of sync context." in \
         [
-            call[0][0] for call in mock_logger.info.call_args_list
+            call[0][0] 
+            for call in mock_logger.info.call_args_list
         ]
