@@ -95,8 +95,17 @@ class DatabaseSettings(BaseModel):
 class DatasourceSettings(BaseModel):
     """Configuration settings for a DataSource."""
     name: str
+    admin_username: str = Field(
+        default=DEFAULT_ADMIN_USERNAME, 
+        min_length=NOT_EMPTY_STR_COUNT
+    )
+    admin_password: str = Field(
+        default=DEFAULT_ADMIN_PASSWORD, 
+        min_length=DEFAULT_MINIMUM_PASSWORD_SIZE
+    )
     databases: List[DatabaseSettings]                   # List of databases in the data source
     description: Optional[str] = None                   # Optional field for a description of the data source
+    databases: List[DatabaseSettings]                   # List of databases in the data source
     connection_timeout: int = Field(default=30, ge=0)   # Timeout for connections in seconds
     retry_attempts: int = Field(default=3, ge=0)        # Number of attempts to connect to the database
 
@@ -128,6 +137,15 @@ class DatasourceSettings(BaseModel):
             raise ValueError("All databases must have the same host and port.")
 
         return databases
+    
+    @property
+    def admin_uri(self) -> AnyUrl:
+        """Constructs the admin URI."""
+        uri = self.databases[0].uri
+        credentials=f"{self.admin_username}:{self.admin_password}"
+        admin_uri = f"postgresql+psycopg2://{credentials}@{uri.host}:{uri.port}"
+        validate_postgresql_uri(admin_uri, allow_async=False)
+        return make_url(admin_uri)
 
     def __repr__(self):
         return f"<DataSourceSettings(name={self.name}, databases={len(self.databases)})>"
