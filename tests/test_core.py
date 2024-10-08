@@ -3,7 +3,6 @@ from contextlib import asynccontextmanager, contextmanager
 from unittest.mock import MagicMock, patch
 from pydantic import ValidationError
 from typing import Dict
-import tracemalloc
 
 from sqlalchemy import Column, Integer, String
 
@@ -20,9 +19,6 @@ from .conftest import (
     DatasourceSettingsFactory, 
     DatabaseSettingsFactory
 )
-
-
-tracemalloc.start()
 
 def test_create_and_drop_tables(sync_database: Database):
     db = sync_database
@@ -508,6 +504,11 @@ def test_get_datasource(mock_data_cluster):
     datasource = mock_data_cluster.get_datasource("ds1")
     assert datasource.name == "ds1"
 
+def test_datacluster_repr(mock_data_cluster):
+    """Test that get_datasource returns the correct instance."""
+    datacluster_repr=f"<DataCluster(datasources=['ds1', 'ds2'])>"
+    assert mock_data_cluster.__repr__() == datacluster_repr
+
 def test_get_datasource_not_found(mock_data_cluster):
     """Test that get_datasource raises KeyError for non-existent datasource."""
     with pytest.raises(KeyError, match="Datasource 'unknown' not found."):
@@ -548,18 +549,3 @@ def test_disconnect_all(mock_data_cluster, mock_datasource):
 
     mock_datasource.disconnect_all.assert_called()
 
-def test_sync_context(mock_data_cluster, mock_logger):
-    """Test sync context manager."""
-    with mock_data_cluster.sync_context() as cluster:
-        assert cluster == mock_data_cluster
-
-    # After exiting the context, ensure disconnect_all was called
-    mock_data_cluster.disconnect_all()
-    
-    # Check the logger call count after exiting the context
-    assert mock_logger.info.call_count >= 1  # Logging happens in disconnect_all
-    assert "Disconnecting all datasources at the end of sync context." in \
-        [
-            call[0][0] 
-            for call in mock_logger.info.call_args_list
-        ]

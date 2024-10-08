@@ -875,26 +875,5 @@ class DataCluster:
             except Exception as e:
                 self.logger.error(f"Failed to disconnect datasource '{name}': {e}")
 
-    @asynccontextmanager
-    async def async_context(self) -> Generator['DataCluster', None, None]:
-        """
-        Async context manager to manage connections and disconnections for async operations.
-        """
-        try:
-            yield self
-        finally:
-            await self.disconnect_all()
-
-    @contextmanager
-    def sync_context(self) -> Generator['DataCluster', None, None]:
-        """
-        Sync context manager to manage connections and disconnections for sync operations.
-        """
-        try:
-            yield self
-        finally:
-            self.logger.info("Disconnecting all datasources at the end of sync context.")
-            self.disconnect_all()
-
     def __repr__(self) -> str:
         return f"<DataCluster(datasources={list(self.datasources.keys())})>"
