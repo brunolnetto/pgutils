@@ -1,11 +1,8 @@
 import pytest
-from typing import List, Any
-from functools import wraps
 
 from pydantic import ValidationError
-from sqlalchemy import create_engine, text, inspect
-from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, AsyncSession
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from pgutils.exceptions import QueryValidationError
 from pgutils.models import DatabaseSettings, ColumnIndex, TablePaginator, QueryValidator
@@ -190,7 +187,7 @@ def test_database_config_validation():
 def test_validate_uri_scheme(uri, expect_exception):
     """Test if the URI scheme validation raises a ValueError for invalid schemes."""
     if expect_exception:
-        with pytest.raises(ValueError, match=f"URI must start with"):
+        with pytest.raises(ValueError, match="URI must start with"):
             DatabaseSettings(
                 uri=uri,
                 admin_username=DEFAULT_ADMIN_USERNAME,

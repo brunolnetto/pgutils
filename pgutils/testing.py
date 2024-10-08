@@ -1,9 +1,7 @@
 from urllib.parse import urlparse, urlunparse
 
-from pydantic import ValidationError, AnyUrl
-from sqlalchemy import create_engine, text, inspect
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, AsyncSession
+from pydantic import AnyUrl
+from sqlalchemy import create_engine, text
 
 
 def convert_to_sync_dsn(uri: AnyUrl) -> str:

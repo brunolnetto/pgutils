@@ -1,8 +1,7 @@
 from typing import (
-    Dict, List, Any, Generator, AsyncGenerator, Union, Optional
+    List, Any, Generator, AsyncGenerator, Union
 )
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncConnection
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 

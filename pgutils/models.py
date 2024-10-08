@@ -1,28 +1,22 @@
 from typing import (
     Dict, List, Any, 
-    Generator, AsyncGenerator, 
-    Union, Optional
+    Optional
 )
-from urllib.parse import urlparse
 from typing_extensions import Self
-from pydantic import BaseModel, ValidationError, HttpUrl
+from pydantic import BaseModel
 import re
 
 from pydantic import (
-    BaseModel, 
     AnyUrl, 
-    ValidationError, 
     field_validator, 
     model_validator, 
     Field 
 )
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine.url import make_url
-from sqlalchemy.engine import Connection, Result
-from sqlalchemy.orm import Session
-from sqlalchemy.ext.asyncio import AsyncSession, AsyncConnection
+from sqlalchemy.engine import Result
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .types import (
     SyncPageGenerator, 
