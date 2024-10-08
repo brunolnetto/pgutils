@@ -59,12 +59,24 @@ def mask_sensitive_data(uri: URL) -> str:
     return str(uri._replace(password="******", username="******"))
 
 def construct_uri(
-    drivername: str, 
-    username: str, 
-    password: str, 
-    host: str, 
-    port: int, 
-    database: str
+    drivername: str, username: str, password: str, host: str, port: int, database: str
 ) -> AnyUrl:
-        """Constructs a PostgreSQL URI from the provided components."""
-        return make_url(f"{drivername}://{username}:{password}@{host}:{port}/{database}")
+    """Constructs a PostgreSQL URI from the provided components, excluding slash if the database is empty."""
+    database_part = f"/{database}" if database else ""
+    return make_url(f"{drivername}://{username}:{password}@{host}:{port}{database_part}")
+
+def construct_complete_uri(uri: AnyUrl, username: str, password: str, default_port: int) -> AnyUrl:
+    """Constructs the complete URI for a database connection."""
+    parsed_uri = make_url(str(uri))
+    return construct_uri(
+        parsed_uri.drivername,
+        username or parsed_uri.username,
+        password or parsed_uri.password,
+        parsed_uri.host,
+        parsed_uri.port or default_port,
+        parsed_uri.database or ''
+    )
+
+def construct_admin_uri(uri: AnyUrl, username: str, password: str) -> AnyUrl:
+    """Constructs an admin URI from the given details."""
+    return construct_uri('postgresql+psycopg2', username, password, uri.host, uri.port, '')

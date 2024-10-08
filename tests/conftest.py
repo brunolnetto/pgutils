@@ -1,13 +1,16 @@
 import pytest
 import asyncio
+import random
 from typing import List, Any, Dict
+from unittest.mock import AsyncMock, MagicMock, patch, create_autospec
 
-from pydantic import ValidationError
+import factory
+from pydantic import ValidationError, AnyUrl
 from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, AsyncSession
 
-from pgutils.core import Database, Datasource, MultiDatasource
+from pgutils.core import Database, Datasource, DataCluster
 from pgutils.models import DatabaseSettings, DatasourceSettings
 from pgutils.testing import prepare_database
 
@@ -156,5 +159,86 @@ async def async_session_factory():
     # Ensure engine disposal after the session is done
     await async_engine.dispose()
 
+@pytest.fixture(scope='function')
+def mock_logger():
+    """Fixture for mocking a logger."""
+    return MagicMock()
 
+class LoggerMock:
+    def __init__(self):
+        self.info = MagicMock()
+        self.error = MagicMock()
 
+class DatabaseSettingsFactory(factory.Factory):
+    class Meta:
+        model = DatabaseSettings
+
+    name = factory.Sequence(lambda n: f"db{n}")
+    uri = factory.LazyFunction(
+        lambda: f"postgresql://user:password@localhost:5432/db{random.randint(1, 1000)}")  # Generating a valid URL string
+    admin_username = "admin"
+    admin_password = "password"
+    default_port = 5432
+    async_mode = False
+    pool_size = 10
+    max_overflow = 5
+    auto_create_db = False
+
+class DatasourceSettingsFactory(factory.Factory):
+    class Meta:
+        model = DatasourceSettings
+
+    name = "TestDataSource"
+    admin_username = "admin"
+    admin_password = "password"
+    databases = factory.List([
+        factory.SubFactory(DatabaseSettingsFactory),
+        factory.SubFactory(DatabaseSettingsFactory)
+    ])
+    connection_timeout = 30
+    retry_attempts = 3
+
+@pytest.fixture
+def mock_datasource():
+    """Fixture for mocking a Datasource instance."""
+    return create_autospec(Datasource)
+
+def create_mocked_data_cluster():
+    """Create a mocked DataCluster instance using factories."""
+    # Generate DatasourceSettings using the factory
+    datasource_settings = {
+        "ds1": DatasourceSettingsFactory(name="ds1"),
+        "ds2": DatasourceSettingsFactory(name="ds2"),
+    }
+    
+    # Create a mock logger
+    mock_logger = MagicMock()  # You can specify the logger's behavior if needed
+
+    # Create the DataCluster instance with the generated datasource settings
+    data_cluster = DataCluster(datasource_settings, mock_logger)
+
+    # Mock the datasources within the DataCluster
+    data_cluster.datasources = {
+        ds.name: MagicMock(spec=DatasourceSettings, name=ds.name) for ds in datasource_settings.values()
+    }
+
+    # Mock methods for each datasource
+    for ds in data_cluster.datasources.values():
+        ds.disconnect_all = AsyncMock()
+        ds.create_tables_all = MagicMock()
+
+    return data_cluster
+
+@pytest.fixture
+def datasource_settings_factory():
+    """Fixture to create mock DatasourceSettings for tests."""
+    return DatasourceSettingsFactory
+
+@pytest.fixture(scope="function")
+def mock_data_cluster(datasource_settings_factory, mock_logger):
+    """Fixture to create a DataCluster instance for tests."""
+    settings_dict = {
+        "ds1": datasource_settings_factory(name="ds1"),
+        "ds2": datasource_settings_factory(name="ds2"),
+    }
+    return DataCluster(settings_dict, logger=mock_logger)

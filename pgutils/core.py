@@ -22,21 +22,26 @@ from .models import (
     DatabaseSettings, 
     TableConstraint, Trigger, ColumnIndex, TablePaginator
 )
-from .utils import run_async_method, mask_sensitive_data
+from .utils import (
+    run_async_method, mask_sensitive_data, construct_admin_uri, construct_complete_uri
+)
 from .constants import PAGINATION_BATCH_SIZE
+from .types import DatabaseConnection
 
 class Database:
     """
     Database class for managing PostgreSQL connections and operations.
     Supports both synchronous and asynchronous operations.
     """
-    RESERVED_KEYWORDS = {"SELECT", "INSERT", "DELETE", "UPDATE", "DROP", "CREATE", "FROM", "WHERE", "JOIN", "TABLE", "INDEX"}
+    RESERVED_KEYWORDS = {
+        "SELECT", "INSERT", "DELETE", "UPDATE", "DROP", "CREATE", "FROM", "WHERE", "JOIN", "TABLE", "INDEX"
+    }
 
     def __init__(self, config: DatabaseSettings, logger: Logger = None):
         self.config = config
         self.uri = make_url(str(config.complete_uri))
         self.admin_uri = config.admin_uri
-        self.base = declarative_base()
+        self.base  = declarative_base()
         self.async_mode = config.async_mode
         self.logger = logger or getLogger(__name__)
 
@@ -91,14 +96,10 @@ class Database:
             return False
 
         with self.admin_engine.connect() as connection:
-            try:
-                create_query=text(f"SELECT 1 FROM pg_database WHERE datname = '{db_name_to_check}';")
-                result = connection.execute(create_query)
-                exists = result.scalar() is not None  # Check if any row was returned
-                return exists
-            except (OperationalError, ProgrammingError) as e:
-                self.logger.error(f"Error while checking if database '{db_name_to_check}' exists: {e}")
-                return False
+            create_query=text(f"SELECT 1 FROM pg_database WHERE datname = '{db_name_to_check}';")
+            result = connection.execute(create_query)
+            exists = result.scalar() is not None  # Check if any row was returned
+            return exists
 
     def create_database_if_not_exists(self, db_name: str = None):
         db_name_to_check = db_name or self.config.name
@@ -129,47 +130,62 @@ class Database:
             )
             
             with sync_engine.connect() as connection:
-                try:
-                    connection.execute(text(f"""
-                        SELECT pg_terminate_backend(pg_stat_activity.pid)
-                        FROM pg_stat_activity
-                        WHERE pg_stat_activity.datname = '{self._db_name}'
-                        AND pid <> pg_backend_pid();
-                    """))
-                    self.logger.info(f"Terminated connections for database '{self._db_name}'.")
-                    connection.execute(text(f"DROP DATABASE IF EXISTS \"{self._db_name}\""))
-                    self.logger.info(f"Database '{self._db_name}' dropped successfully.")
-                except (OperationalError, ProgrammingError) as e:
-                    self.logger.error(f"Error while dropping database '{self._db_name}': {e}")
+                connection.execute(text(f"""
+                    SELECT pg_terminate_backend(pg_stat_activity.pid)
+                    FROM pg_stat_activity
+                    WHERE pg_stat_activity.datname = '{self.name}'
+                    AND pid <> pg_backend_pid();
+                """))
+                self.logger.info(f"Terminated connections for database '{self.name}'.")
+                connection.execute(text(f"DROP DATABASE IF EXISTS \"{self.name}\""))
+                self.logger.info(f"Database '{self.name}' dropped successfully.")
     
-    async def _column_exists_async(self, table_name: str, column_candidate: str) -> bool:
+    async def _column_exists_async(self, table_schema: str, table_name: str, column_name: str) -> bool:
         """Check if the specified columns exist in the table asynchronously."""
         async with self.get_session() as session:
             query=text(
                 """
                 SELECT column_name
                 FROM information_schema.columns
-                WHERE table_name = :table_name
+                WHERE table_name = :table_name and 
+                table_schema = :table_schema
                 """
             )
-            result = await session.execute(query, {"table_name": table_name})
+            params={
+                "table_schema": table_schema,
+                "table_name": table_name
+            }
+            result = await session.execute(query, params)
             
             actual_columns = {row[0] for row in result}
-            return column_candidate in actual_columns
+            return column_name in actual_columns
 
-    def _column_exists_sync(self, table_name: str, column_candidate: str) -> bool:
+    def _column_exists_sync(self, table_schema: str, table_name: str, column_name: str) -> bool:
         """Check if the specified columns exist in the table synchronously."""
-        inspector = inspect(self.engine) 
-        actual_columns = {column['name'] for column in inspector.get_columns(table_name)}
-        
-        return column_candidate in actual_columns
+        with self.get_session() as session:
+            query=text(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = :table_name and 
+                table_schema = :table_schema
+                """
+            )
+            params={
+                "table_schema": table_schema,
+                "table_name": table_name
+            }
+            result = session.execute(query, params)
+            
+            actual_columns = {row[0] for row in result}
+            return column_name in actual_columns
 
-    def column_exists(self, table_name: str, columns: List[str]) -> List[str]:
+    def column_exists(self, schema_name: str, table_name: str, column_name: str) -> bool:
         """Check if the specified columns exist in the table, supporting both async and sync modes."""
         if self.async_mode:
-            return run_async_method(self._column_exists_async, table_name, columns)
+            return run_async_method(self._column_exists_async, schema_name, table_name, column_name)
         else:
-            return self._column_exists_sync(table_name, columns)
+            return self._column_exists_sync(schema_name, table_name, column_name)
 
     async def create_indexes(self, indexes: Dict[str, ColumnIndex]):
         """Creates indexes based on the provided configuration."""
@@ -610,7 +626,7 @@ class Database:
             self.logger.warning(f"Invalid table name attempted: '{table_name}'")
 
         return is_valid
-    
+
     async def _disconnect_async(self):
         """Asynchronously cleans up and closes the database connections."""
         await self.engine.dispose()
@@ -639,13 +655,14 @@ class Database:
             return []
     
     def paginate(
-        self, 
+        self,
+        conn: DatabaseConnection,
         query: str, 
-        params: Optional[dict] = None, 
+        params: Optional[Dict[str, Any]] = None, 
         batch_size: int = PAGINATION_BATCH_SIZE
     ) -> Generator[List[Any], None, None]:
         """Unified paginate interface for synchronous and asynchronous queries."""
-        paginator = TablePaginator(query, params, batch_size)
+        paginator = TablePaginator(conn, query, params=params, batch_size=batch_size)
 
         try:
             if self.async_mode:
@@ -683,11 +700,8 @@ class Datasource:
 
         self.databases: Dict[str, Database] = {}
         for database_settings in settings.databases:
-            try:
-                # Initialize and validate database instance
-                self.databases[database_settings.name] = Database(database_settings)
-            except ValidationError as e:
-                self.logger.error(f"Invalid configuration for database '{database_settings.name}': {e}")
+            # Initialize and validate database instance
+            self.databases[database_settings.name] = Database(database_settings)
 
     def get_database(self, name: str) -> Database:
         """Returns the database instance for the given name."""
@@ -737,7 +751,14 @@ class Datasource:
 
     def list_columns(self, database_name: str, table_schema: str, table_name: str):
         """List columns for a table in a specified database or across all databases."""
-        return self.get_database(database_name).list_columns(table_schema, table_name)
+        print(self.get_database(database_name))
+        return self.get_database(database_name).list_columns(table_name, table_schema)
+
+    def column_exists(
+        self, database_name: str, table_schema: str, table_name: str, column: str
+    ):
+        """List columns for a table in a specified database or across all databases."""
+        return self.get_database(database_name).column_exists(table_schema, table_name, column)
 
     def list_types(self, database_name: str):
         """List user-defined types from a specified database or from all databases."""
@@ -782,7 +803,10 @@ class Datasource:
     def __getitem__(self, database_name: str):
         return self.get_database(database_name)
 
-class MultiDatasource:
+    def __repr__(self):
+        return f'Datasource({self.databases.keys()})'
+
+class DataCluster:
     """
     Manages multiple Datasource instances.
 
@@ -803,13 +827,16 @@ class MultiDatasource:
             try:
                 # Initialize and validate datasource instance
                 self.datasources[name] = Datasource(settings, self.logger)
+                self.logger.info(f"Initialized datasource '{name}' successfully.")
             except ValidationError as e:
                 self.logger.error(f"Invalid configuration for datasource '{name}': {e}")
 
     def get_datasource(self, name: str) -> Datasource:
         """Returns the datasource instance for the given name."""
         if name not in self.datasources:
+            self.logger.error(f"Datasource '{name}' not found.")
             raise KeyError(f"Datasource '{name}' not found.")
+
         return self.datasources[name]
 
     def health_check_all(self) -> Dict[str, Dict[str, bool]]:
@@ -822,22 +849,34 @@ class MultiDatasource:
         results = {}
         for name, datasource in self.datasources.items():
             self.logger.info(f"Starting health check for datasource '{name}'")
-            results[name] = datasource.health_check_all()
-            self.logger.info(f"Health check for datasource '{name}' completed.")
+            try:
+                results[name] = datasource.health_check_all()
+                self.logger.info(f"Health check for datasource '{name}' completed successfully.")
+            except Exception as e:
+                self.logger.error(f"Health check for datasource '{name}' failed: {e}")
+                results[name] = {'error': str(e)}
         return results
 
     def create_tables_all(self):
         """Creates tables for all datasources."""
-        for datasource in self.datasources.values():
-            datasource.create_tables_all()
+        for name, datasource in self.datasources.items():
+            try:
+                datasource.create_tables_all()
+                self.logger.info(f"Tables created for datasource '{name}' successfully.")
+            except Exception as e:
+                self.logger.error(f"Failed to create tables for datasource '{name}': {e}")
 
     def disconnect_all(self):
         """Disconnects all datasources."""
-        for datasource in self.datasources.values():
-            datasource.disconnect_all()
+        for name, datasource in self.datasources.items():
+            try:
+                datasource.disconnect_all()
+                self.logger.info(f"Disconnected datasource '{name}' successfully.")
+            except Exception as e:
+                self.logger.error(f"Failed to disconnect datasource '{name}': {e}")
 
     @asynccontextmanager
-    async def async_context(self):
+    async def async_context(self) -> Generator['DataCluster', None, None]:
         """
         Async context manager to manage connections and disconnections for async operations.
         """
@@ -847,14 +886,15 @@ class MultiDatasource:
             await self.disconnect_all()
 
     @contextmanager
-    def sync_context(self):
+    def sync_context(self) -> Generator['DataCluster', None, None]:
         """
         Sync context manager to manage connections and disconnections for sync operations.
         """
         try:
             yield self
         finally:
+            self.logger.info("Disconnecting all datasources at the end of sync context.")
             self.disconnect_all()
 
-    def __repr__(self):
-        return f"<MultiDatasource(datasources={list(self.datasources.keys())})>"
+    def __repr__(self) -> str:
+        return f"<DataCluster(datasources={list(self.datasources.keys())})>"
