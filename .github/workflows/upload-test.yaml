@@ -16,10 +16,13 @@ jobs:
 
     - name: Set up Docker
       uses: docker/setup-buildx-action@v2
-      
+
+    - name: List files in the context
+      run: ls -la ./
+
     - name: Build and Start Docker Containers
       run: |
-        docker-compose -f docker-compose.yaml up -d
+        docker-compose -f ./docker-compose.yaml up -d
         # Wait for the databases to be healthy
         for port in 5432 5433; do
           until nc -z localhost $port; do   
