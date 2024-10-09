@@ -48,14 +48,6 @@ jobs:
       with:
         python-version: '3.9'
 
-    - name: List files here
-      run: ls 
-
-    - name: List files here
-      run: ls ..
-    
-    - name: Install requirements
-      run: pip install -r ./../../requirements.txt && pip install -r ./../../requirements_dev.txt
     #----------------------------------------------
     #       install & configure poetry  -----
     #----------------------------------------------
