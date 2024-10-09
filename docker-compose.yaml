@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   db1:
     image: postgres:latest
@@ -7,11 +9,12 @@ services:
       POSTGRES_PASSWORD: postgres
     ports:
       - "5432:5432"
-    command: ["bash", "./build/init-db.sh"]
+    command: ["bash", "/build/init-db.sh"]  # Correct path inside the container
     volumes:
       - ./postgresql.conf:/etc/postgresql.conf
       - db1_data:/var/lib/postgresql/data
-      - ./pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
+      - ./pg_hba.conf:/pg_hba.conf  # Copy this to root to use in the script
+      - ./build:/build  # Mount the build directory to /build in the container
 
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
@@ -27,11 +30,13 @@ services:
       POSTGRES_PASSWORD: postgres
     ports:
       - "5433:5432"
-    command: ["bash", "./build/init-db.sh"]
+    command: ["bash", "/build/init-db.sh"]  # Correct path inside the container
     volumes:
       - ./postgresql.conf:/etc/postgresql.conf
       - db2_data:/var/lib/postgresql/data
-      - ./pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
+      - ./pg_hba.conf:/pg_hba.conf  # Copy this to root to use in the script
+      - ./build:/build  # Mount the build directory to /build in the container
+
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
