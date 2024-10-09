@@ -14,19 +14,23 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    # Install Docker
-    - name: Install Docker
+    # Install Docker and Docker Compose
+    - name: Install Docker and Docker Compose
       run: |
         sudo apt-get update
-        sudo apt-get install -y docker.io
-        sudo systemctl start docker
-        sudo systemctl enable docker
-
-    # Install Docker Compose
-    - name: Install Docker Compose
-      run: |
+        sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+        sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+        sudo apt-get update
+        sudo apt-get install -y docker-ce
         sudo apt-get install -y python3-pip
         pip3 install docker-compose
+
+    # Verify installations
+    - name: Verify Docker and Docker Compose Installation
+      run: |
+        docker --version
+        docker-compose --version
 
     - name: Build and Start Docker Containers
       run: |
