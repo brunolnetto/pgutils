@@ -14,7 +14,7 @@ from pgutils.core import Database, Datasource, DataCluster
 from pgutils.models import DatabaseSettings, DatasourceSettings
 from pgutils.testing import prepare_database
 
-DEFAULT_PORT=5433
+DEFAULT_PORT=5432
 
 # Database configuration constants
 DB_NAME = "mydb"
