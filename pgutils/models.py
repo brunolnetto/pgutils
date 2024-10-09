@@ -24,7 +24,13 @@ from .types import (
     PageGenerator, 
     DatabaseConnection
 )
-from .utils import validate_postgresql_uri, construct_uri, run_async_method
+from .utils import (
+    validate_postgresql_uri, 
+    construct_uri, 
+    construct_admin_uri,
+    construct_complete_uri, 
+    run_async_method
+)
 from .constants import (
     PAGINATION_BATCH_SIZE,
     DEFAULT_POOL_SIZE,
@@ -62,25 +68,17 @@ class DatabaseSettings(BaseModel):
     @property
     def admin_uri(self) -> AnyUrl:
         """Constructs the admin URI."""
-        location=f"{self.uri.host}:{self.uri.port}"
-        credentials=f"{self.admin_username}:{self.admin_password}"
-        admin_uri = f"postgresql+psycopg2://{credentials}@{location}"
-        validate_postgresql_uri(admin_uri, allow_async=False)
-        return make_url(admin_uri)
+        return construct_admin_uri(
+            self.uri, self.admin_username, self.admin_password
+        )
 
     @property
     def complete_uri(self) -> AnyUrl:
         """Builds the complete URI."""
-        parsed_uri = make_url(str(self.uri))
-        drivername = parsed_uri.drivername
-        username = parsed_uri.username or self.admin_username
-        password = parsed_uri.password or self.admin_password
-        port = parsed_uri.port or self.default_port
-
-        return construct_uri(
-            drivername, username, password,
-            parsed_uri.host, port, parsed_uri.database or ''
+        return construct_complete_uri(
+            self.uri, self.uri.username, self.uri.password, self.default_port
         )
+
 
     @field_validator('uri')
     def validate_uri(cls, uri: AnyUrl) -> Any:
@@ -95,32 +93,21 @@ class DatabaseSettings(BaseModel):
 class DatasourceSettings(BaseModel):
     """Configuration settings for a DataSource."""
     name: str
-    admin_username: str = Field(
-        default=DEFAULT_ADMIN_USERNAME, 
-        min_length=NOT_EMPTY_STR_COUNT
-    )
-    admin_password: str = Field(
-        default=DEFAULT_ADMIN_PASSWORD, 
-        min_length=DEFAULT_MINIMUM_PASSWORD_SIZE
-    )
+    admin_username: str = Field(default=DEFAULT_ADMIN_USERNAME, min_length=NOT_EMPTY_STR_COUNT)
+    admin_password: str = Field(default=DEFAULT_ADMIN_PASSWORD,  min_length=DEFAULT_MINIMUM_PASSWORD_SIZE)
     databases: List[DatabaseSettings]                   # List of databases in the data source
     description: Optional[str] = None                   # Optional field for a description of the data source
-    databases: List[DatabaseSettings]                   # List of databases in the data source
     connection_timeout: int = Field(default=30, ge=0)   # Timeout for connections in seconds
     retry_attempts: int = Field(default=3, ge=0)        # Number of attempts to connect to the database
 
     @field_validator('databases')
-    def check_databases(cls, values):
-        """Ensures that at least one database configuration is provided."""
-        if not values:
-            raise ValueError("At least one database must be defined in the data source.")
-        return values
+    def validate_databases(cls, databases: List[DatabaseSettings]) -> List[DatabaseSettings]:
+        """Validates that all databases are properly configured."""
+        # Ensure that there is at least one database
+        if not databases:
+            raise ValueError("At least one database must be defined.")
 
-    @field_validator('databases')
-    def validate_databases(cls, databases: List[DatabaseSettings], info):
-        """Validates that all databases reference the base URI, have unique names,
-        valid driver names, and consistent localhost/port."""
-        # Check for unique database names
+        # Check for unique database names and consistent host/port
         names = set()
         parsed_uris = []
         for db in databases:
@@ -128,24 +115,18 @@ class DatasourceSettings(BaseModel):
                 raise ValueError(f"Database name '{db.name}' must be unique within the data source.")
             names.add(db.name)
 
-            # Parse the URI to check for driver, host, and port
+            # Parse the URI to check for consistent host and port
             parsed_uris.append((db.uri.host, db.uri.port))
 
-        # Ensure all databases have the same 
-        are_host_port_equal=len(set(parsed_uris)) != 1
-        if are_host_port_equal:
+        if len(set(parsed_uris)) > 1:
             raise ValueError("All databases must have the same host and port.")
 
         return databases
-    
+
     @property
     def admin_uri(self) -> AnyUrl:
-        """Constructs the admin URI."""
-        uri = self.databases[0].uri
-        credentials=f"{self.admin_username}:{self.admin_password}"
-        admin_uri = f"postgresql+psycopg2://{credentials}@{uri.host}:{uri.port}"
-        validate_postgresql_uri(admin_uri, allow_async=False)
-        return make_url(admin_uri)
+        """Constructs the admin URI using the first database."""
+        return construct_admin_uri(self.databases[0].uri, self.admin_username, self.admin_password)
 
     def __repr__(self):
         return f"<DataSourceSettings(name={self.name}, databases={len(self.databases)})>"
