@@ -1,10 +1,7 @@
 version: '3.8'
-
 services:
   db1:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: postgres:latest
     environment:
       POSTGRES_DB: db1
       POSTGRES_USER: postgres
@@ -16,11 +13,10 @@ services:
       interval: 5s
       timeout: 2s
       retries: 5
+    network_mode: "host"
 
   db2:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: postgres:latest
     environment:
       POSTGRES_DB: db2
       POSTGRES_USER: postgres
@@ -32,3 +28,4 @@ services:
       interval: 5s
       timeout: 2s
       retries: 5
+    network_mode: "host"
