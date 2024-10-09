@@ -11,46 +11,28 @@ jobs:
     runs-on: ubuntu-latest
     name: Host Databases, Run Tests, and Upload Coverage Reports
 
-    services:
-      db1:
-        image: postgres:latest
-        env:
-          POSTGRES_DB: db1
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres" 
-          --health-interval 5s 
-          --health-timeout 2s 
-          --health-retries 5
-
-      db2:
-        image: postgres:latest
-        env:
-          POSTGRES_DB: db2
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres" 
-          --health-interval 5s 
-          --health-timeout 2s 
-          --health-retries 5
-
     steps:
     - uses: actions/checkout@v4
+
+    - name: Set up Docker
+      uses: docker/setup-buildx-action@v2
+      
+    - name: Build and Start Docker Containers
+      run: |
+        docker-compose -f docker-compose.yaml up -d
+        # Wait for the databases to be healthy
+        for port in 5432 5433; do
+          until nc -z localhost $port; do   
+            sleep 1 # wait for 1 second before checking again
+          done
+        done
 
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.9'
 
-    #----------------------------------------------
-    #       install & configure poetry  -----
-    #----------------------------------------------
+    # Install and configure Poetry
     - name: Install and configure Poetry
       uses: snok/install-poetry@v1
       with:
@@ -74,15 +56,6 @@ jobs:
     - name: Install project
       run: poetry install --verbose --no-interaction
 
-    # Wait for the databases to be healthy
-    - name: Wait for Databases to be Ready
-      run: |
-        for port in 5432 5433; do
-          until nc -z localhost $port; do   
-            sleep 1 # wait for 1 second before checking again
-          done
-        done
-
     # Run tests and generate coverage report
     - name: Run Tests with Coverage
       run: |
@@ -91,10 +64,13 @@ jobs:
         mkdir -p coverage-reports
         mv .coverage coverage-reports/coverage.xml
 
+    # Stop and remove the containers after tests
+    - name: Stop Docker Containers
+      run: docker-compose -f docker-compose.yaml down
+
     # Upload Coverage Report to Codecov
     - name: Upload Coverage Reports to Codecov
       run: |
-        # Replace `linux` below with the appropriate OS
         curl -Os https://uploader.codecov.io/latest/linux/codecov
         chmod +x codecov
         ./codecov -t ${{ secrets.CODECOV_TOKEN }} -f coverage-reports/coverage.xml
