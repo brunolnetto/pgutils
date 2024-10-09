@@ -13,7 +13,6 @@ services:
       interval: 5s
       timeout: 2s
       retries: 5
-    network_mode: "host"
 
   db2:
     image: postgres:latest
@@ -28,4 +27,4 @@ services:
       interval: 5s
       timeout: 2s
       retries: 5
-    network_mode: "host"
+
