@@ -9,6 +9,7 @@ services:
       - "5432:5432"
     volumes:
       - ./pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
+      - ./postgresql.conf:/var/lib/postgresql/data/postgresql.conf
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -24,8 +25,8 @@ services:
     ports:
       - "5433:5432"
     volumes:
-      - ./pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf  # Mount your custom pg_hba.conf
-
+      - ./pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
+      - ./postgresql.conf:/var/lib/postgresql/data/postgresql.conf  # Mount your custom postgresql.conf
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
