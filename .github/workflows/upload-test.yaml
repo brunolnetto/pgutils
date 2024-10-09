@@ -86,6 +86,9 @@ jobs:
     - name: Run docker process to check for containers
       run: docker ps -a
 
+    - name: Run docker compose logs
+      run: docker compose logs
+
     # Run tests and generate coverage report
     - name: Run Tests with Coverage
       run: |
