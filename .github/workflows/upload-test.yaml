@@ -14,11 +14,19 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Docker
-      uses: docker/setup-buildx-action@v2
+    # Install Docker
+    - name: Install Docker
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y docker.io
+        sudo systemctl start docker
+        sudo systemctl enable docker
 
-    - name: List files in the context
-      run: ls -la ./
+    # Install Docker Compose
+    - name: Install Docker Compose
+      run: |
+        sudo apt-get install -y python3-pip
+        pip3 install docker-compose
 
     - name: Build and Start Docker Containers
       run: |
