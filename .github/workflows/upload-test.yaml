@@ -83,6 +83,9 @@ jobs:
     - name: Install project
       run: poetry install --verbose --no-interaction
 
+    - name: Run docker process to check for containers
+      run: docker ps -a
+
     # Run tests and generate coverage report
     - name: Run Tests with Coverage
       run: |
