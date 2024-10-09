@@ -10,6 +10,7 @@ services:
     volumes:
       - ./pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
       - ./postgresql.conf:/var/lib/postgresql/data/postgresql.conf
+      - db1_data:/var/lib/postgresql/data
     command: ["-c", "config_file=/var/lib/postgresql/data/postgresql.conf"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
@@ -28,6 +29,7 @@ services:
     volumes:
       - ./pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
       - ./postgresql.conf:/var/lib/postgresql/data/postgresql.conf
+      - db2_data:/var/lib/postgresql/data
     command: ["-c", "config_file=/var/lib/postgresql/data/postgresql.conf"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
@@ -35,3 +37,6 @@ services:
       timeout: 2s
       retries: 5
 
+volumes:
+  db1_data:
+  db2_data:
