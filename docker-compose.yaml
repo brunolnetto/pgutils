@@ -7,11 +7,12 @@ services:
       POSTGRES_PASSWORD: postgres
     ports:
       - "5432:5432"
+    command: ["postgres", "-c", "config_file=/etc/postgresql.conf"]
     volumes:
-      - ./pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
-      - ./postgresql.conf:/var/lib/postgresql/data/postgresql.conf
+      - ./postgresql.conf:/etc/postgresql.conf
       - db1_data:/var/lib/postgresql/data
-    command: ["-c", "config_file=/var/lib/postgresql/data/postgresql.conf"]
+      - ./pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
+
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -26,11 +27,11 @@ services:
       POSTGRES_PASSWORD: postgres
     ports:
       - "5433:5432"
+    command: ["postgres", "-c", "config_file=/etc/postgresql.conf"]
     volumes:
-      - ./pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
-      - ./postgresql.conf:/var/lib/postgresql/data/postgresql.conf
+      - ./postgresql.conf:/etc/postgresql.conf
       - db2_data:/var/lib/postgresql/data
-    command: ["-c", "config_file=/var/lib/postgresql/data/postgresql.conf"]
+      - ./pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
