@@ -69,7 +69,7 @@ replace: ## Replaces a token in the code. Usage: make replace token=your_token
 
 test: ## run tests quickly with the default Python
 	poetry shell
-	pytest
+	pytest --durations=10
 
 watch-test: ## run tests on watchdog mode
 	poetry shell
@@ -79,7 +79,7 @@ lint: clean ## perform inplace lint fixes
 	ruff check --fix .
 
 cov: clean ##
-	coverage run --source "$$PACKAGE_NAME" --omit "tests/*,*/__init__.py" -m pytest
+	coverage run --source "$$PACKAGE_NAME" --omit "tests/*,*/__init__.py" -m pytest --durations=10
 	coverage report -m
 
 watch-cov: clean ## check code coverage quickly with the default Python
