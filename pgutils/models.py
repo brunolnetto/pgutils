@@ -257,7 +257,7 @@ class TablePaginator:
         count_query = f"SELECT COUNT(1) FROM ({self.query}) as total"
         result = await self.conn.execute(text(count_query).bindparams(**self.params))
         return result.scalar()
-    
+
     def get_total_count(self) -> int:
         """Fetch the total count using the run_async_method utility."""
         if isinstance(self.conn, (AsyncConnection, AsyncSession)):
@@ -287,18 +287,16 @@ class TablePaginator:
 
     def _paginated_query_sync(self) -> SyncPageGenerator:
         """Synchronous generator to fetch results batch by batch."""
-        if self.total_count is None:
-            self.total_count = self._get_total_count_sync()
+        self.total_count = self._get_total_count_sync()
 
         while self.current_offset < self.total_count:
-            batch = self.fetch_batch()
+            batch = self._fetch_batch_sync()
             yield batch
             self.current_offset += self.batch_size
 
     async def _paginated_query_async(self) -> AsyncPageGenerator:
         """Asynchronous generator to fetch results batch by batch."""
-        if self.total_count is None:
-            self.total_count = await self._get_total_count_async()
+        self.total_count = await self._get_total_count_async()
 
         while self.current_offset < self.total_count:
             batch = await self._fetch_batch_async()
@@ -311,9 +309,3 @@ class TablePaginator:
             return self._paginated_query_async()
         else:
             return self._paginated_query_sync()
-
-    def fetch_batch(self) -> List[Any]:
-        """Fetch a batch using the run_async_method utility."""
-        if isinstance(self.conn, (AsyncConnection, AsyncSession)):
-            return run_async_method(self._fetch_batch_async)
-        return self._fetch_batch_sync()

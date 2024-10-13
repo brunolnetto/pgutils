@@ -29,21 +29,12 @@ def create_database(uri: str, db_name: str):
     
     # Drop the database if it exists
     with default_engine.connect() as conn:
-        try:
-            query=text(f"DROP DATABASE IF EXISTS {db_name};")
-            conn.execute(query)
-            print(f"Dropped database '{db_name}' if it existed.")
-        except Exception as e:
-            print(f"Error dropping database: {e}")
-
-    # Create the database
-    try:
-        with default_engine.connect() as conn:
-            conn.execute(text(f"CREATE DATABASE {db_name};"))
-            print(f"Database '{db_name}' created.")
-    except Exception as e:
-        print(f"Error creating database: {e}")
-
+        query=text(f"DROP DATABASE IF EXISTS {db_name};")
+        conn.execute(query)
+        print(f"Dropped database '{db_name}' if it existed.")
+    
+        conn.execute(text(f"CREATE DATABASE {db_name};"))
+        print(f"Database '{db_name}' created.")
 
 def populate_database(uri: str, db_name: str):
     default_engine = create_engine(uri, isolation_level="AUTOCOMMIT")
@@ -51,43 +42,43 @@ def populate_database(uri: str, db_name: str):
     # Create the test table and populate it with data
     with default_engine.connect() as conn:
         # Create the table
-            conn.execute(
-                text(
-                    """
-                        CREATE TABLE IF NOT EXISTS test_table (
-                            id SERIAL PRIMARY KEY, 
-                            name TEXT
-                        );
-                    """
-                )
+        conn.execute(
+            text(
+                """
+                    CREATE TABLE IF NOT EXISTS test_table (
+                        id SERIAL PRIMARY KEY, 
+                        name TEXT
+                    );
+                """
             )
+        )
 
-            # Check available tables
-            result = conn.execute(
-                text(
-                    """
-                        SELECT 
-                            table_name 
-                        FROM 
-                            information_schema.tables 
-                        WHERE 
-                            table_schema='public';
-                    """
-                )
+        # Check available tables
+        result = conn.execute(
+            text(
+                """
+                    SELECT 
+                        table_name 
+                    FROM 
+                        information_schema.tables 
+                    WHERE 
+                        table_schema='public';
+                """
             )
-            tables = [row[0] for row in result]
+        )
+        tables = [row[0] for row in result]
 
-            # Clear existing data
-            conn.execute(text("DELETE FROM test_table;"))
+        # Clear existing data
+        conn.execute(text("DELETE FROM test_table;"))
 
-            # Insert new data
-            conn.execute(
-                text("""
-                    INSERT INTO test_table (name) 
-                    VALUES ('Alice'), ('Bob'), ('Charlie'), ('David');
-                """)
-            )
-            conn.commit()
+        # Insert new data
+        conn.execute(
+            text("""
+                INSERT INTO test_table (name) 
+                VALUES ('Alice'), ('Bob'), ('Charlie'), ('David');
+            """)
+        )
+        conn.commit()
 
 def prepare_database(admin_uri: AnyUrl, data_uri: AnyUrl, db_name):
     admin_uri = convert_to_sync_dsn(admin_uri)

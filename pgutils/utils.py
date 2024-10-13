@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Callable
+from typing import Union, Any, Callable, AsyncGenerator
 from pydantic import AnyUrl
 
 from sqlalchemy.engine.url import make_url, URL
@@ -57,7 +57,6 @@ def run_async_method(async_method: Callable, *args, **kwargs) -> Any:
     except RuntimeError:
         # If there's no event loop, we can create a new one and run the async method
         return asyncio.run(async_method(*args, **kwargs))
-
 
 def mask_sensitive_data(uri: URL) -> str:
     return str(uri._replace(password="******", username="******"))

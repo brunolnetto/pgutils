@@ -22,7 +22,11 @@ ADMIN_SYNC_URL=f"postgresql://postgres:postgres@localhost:{DEFAULT_PORT}/postgre
 SYNC_DB_URL = f"postgresql://postgres:postgres@localhost:{DEFAULT_PORT}/{DB_NAME}"
 ASYNC_DB_URL = f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}/{DB_NAME}"
 
-@pytest.fixture()
+@pytest.fixture
+def default_port():
+    return DEFAULT_PORT
+
+@pytest.fixture(scope="session")
 def invalid_uri_config():
     return {
         "uri": "invalid_uri",
@@ -34,7 +38,7 @@ def invalid_uri_config():
         "auto_create_db": False
     }
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def databases_settings():
     settings_dict = {
         "sync": {
@@ -58,7 +62,7 @@ def databases_settings():
         for settings_name, settings_values in settings_dict.items()
     }
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def database_settings():
     settings_dict = {
         "sync": {
@@ -90,7 +94,7 @@ def database_settings():
     }
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def sync_settings_without_auto_create():
     return DatabaseSettings(**{
         "uri": f"postgresql://postgres:postgres@localhost:{DEFAULT_PORT}/db_test",
@@ -99,6 +103,22 @@ def sync_settings_without_auto_create():
         "async_mode": False,
         "auto_create_db": False
     })
+
+@pytest.fixture(scope="session")
+def sync_settings_without_db_name():
+    return DatabaseSettings(**{
+        "uri": f"postgresql://postgres:postgres@localhost:{DEFAULT_PORT}",
+        "admin_username": "postgres",
+        "admin_password": "postgres",
+        "async_mode": False,
+        "auto_create_db": False
+    })
+
+@pytest.fixture(scope="function")
+def database_without_db_name(sync_settings_without_db_name):
+    db = Database(sync_settings_without_db_name)
+    yield db
+
 
 @pytest.fixture(scope="function")
 def database_without_auto_create(sync_settings_without_auto_create):
@@ -115,9 +135,8 @@ def async_database(databases_settings):
     db = Database(databases_settings['async'])
     yield db
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def datasource_settings(databases_settings: Dict[str, DatabaseSettings]):
-
     # Create the DatasourceSettings fixture
     return DatasourceSettings(
         name="Datasource object",
@@ -125,14 +144,18 @@ def datasource_settings(databases_settings: Dict[str, DatabaseSettings]):
         description="Datasource with both sync and async databases"
     )
 
-@pytest.fixture(scope="module")
-def datasource(datasource_settings: DatasourceSettings):
+@pytest.fixture(scope="session", autouse=True)
+def setup_database(datasource_settings: DatasourceSettings):
     for database in datasource_settings.databases:
         prepare_database(str(database.admin_uri), str(database.uri), database.name)
-    
-    return Datasource(datasource_settings)
 
-@pytest.fixture(scope="module")
+@pytest.fixture
+def datasource(datasource_settings: DatasourceSettings):
+    datasource = Datasource(datasource_settings)
+    yield datasource
+    datasource.disconnect_all()
+
+@pytest.fixture(scope="session")
 def sync_db_engine():
     """Create a test PostgreSQL database engine and ensure the database exists."""
     prepare_database(ADMIN_SYNC_URL, SYNC_DB_URL, DB_NAME)

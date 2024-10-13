@@ -68,15 +68,40 @@ def test_check_database_exists_true(sync_database):
     assert result is True
 
 
-def test_check_database_doesnt_exist(database_without_auto_create):
+def test_check_database_doesnt_exist(default_port):
     """Test when an error occurs during the check (synchronous)."""
-    # Check that the method returned False due to the error
-    db_exists = database_without_auto_create.check_database_exists()
+    db_settings=DatabaseSettings(
+        **{
+            "uri": f"postgresql://postgres:postgres@localhost:{default_port}/db_test",
+            "admin_username": "postgres",
+            "admin_password": "postgres",
+            "async_mode": False,
+            "auto_create_db": False
+        }
+    )
+    db = Database(db_settings)
     
+    # Check that the method returned False due to the error
+    db.drop_database_if_exists()
+    db_exists = db.check_database_exists()
     assert db_exists is False
     
-    db_exists = database_without_auto_create.check_database_exists('test_db_')
+    db_exists = db.check_database_exists('test_db_')
+    assert db_exists is False
 
+    db.create_database_if_not_exists()
+    db_exists = db.check_database_exists()
+    assert db_exists is True
+    
+    db.drop_database_if_exists()
+    db_exists = db.check_database_exists()
+    assert db_exists is False
+
+def test_check_database_doesnt_exist_without_db_name(database_without_db_name: Database):
+    """Test when an error occurs during the check (synchronous)."""
+    # Check that the method returned False due to the error
+    db_exists = database_without_db_name.check_database_exists()
+    
     assert db_exists is False
 
 def test_repr_sync_database(sync_database: Database):
@@ -101,9 +126,7 @@ def test_paginate_sync(sync_database: Database):
         # Assertion to verify the result
         assert len(results) == 2
 
-def test_datasource_repr(
-    datasource: Datasource
-):
+def test_datasource_repr(datasource: Datasource):
     # Assertion to verify the result
     assert datasource.__repr__() == f"Datasource({datasource.databases.keys()})"
 
@@ -203,7 +226,7 @@ def test_list_sequences(
     async_database: Database,
     datasource: Datasource
 ):
-    expected={'test_table_id_seq','test_table_audit_id_seq'}
+    expected={'test_table_id_seq'}
 
     sync_results = sync_database.list_sequences()
     async_results = sync_database.list_sequences()
@@ -221,6 +244,9 @@ def test_audit_trigger(
     datasource: Datasource
 ):
     sync_database.add_audit_trigger('test_table')
+    sync_database.add_audit_trigger('test_table')
+
+    async_database.add_audit_trigger('test_table')
     async_database.add_audit_trigger('test_table')
 
     sync_results = sync_database.list_triggers('test_table')
@@ -388,8 +414,22 @@ def test_create_indexes_sync(sync_database: Database):
 
     # Run the method
     sync_database.create_indexes(indexes)
+    
     indexes=sync_database.list_indexes('test_table')
     assert len(indexes) == 2
+
+    assert sync_database.create_indexes([]) is None
+
+    invalid_indexes = [
+        ColumnIndex(
+            table_name='test_table', 
+            column_names=['invalid'], 
+            type='btree'
+        )
+    ]
+
+    with pytest.raises(ValueError):
+        sync_database.create_indexes(invalid_indexes)
 
 def test_create_indexes_async(async_database: Database):
     """Test the create_indexes method for sync."""

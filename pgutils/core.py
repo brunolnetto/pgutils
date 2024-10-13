@@ -51,9 +51,10 @@ class Database:
         self.engine = self._create_engine()
         self.session_maker = self._create_sessionmaker()
 
-        if config.name and config.auto_create_db:
+        if config.name:
             self.name = config.name
-            self.create_database_if_not_exists(config.name)       
+            if config.auto_create_db: 
+                self.create_database_if_not_exists(config.name)
 
     def _create_engine(self):
         """Create and return the database engine based on async mode."""
@@ -122,26 +123,23 @@ class Database:
                 if 'already exists' not in str(e):
                     raise  # Reraise if it's a different error
 
-    def drop_database_if_exists(self):
+    def drop_database_if_exists(self, db_name: str = None):
         """Drops the database if it exists."""
-        if self._db_name:
-            admin_uri_str=str(self.admin_uri)
-            sync_engine=create_engine(
-                admin_uri_str, 
-                isolation_level="AUTOCOMMIT"
-            )
-            
-            with sync_engine.connect() as connection:
-                connection.execute(text(f"""
-                    SELECT pg_terminate_backend(pg_stat_activity.pid)
-                    FROM pg_stat_activity
-                    WHERE pg_stat_activity.datname = '{self.name}'
-                    AND pid <> pg_backend_pid();
-                """))
-                self.logger.info(f"Terminated connections for database '{self.name}'.")
-                connection.execute(text(f"DROP DATABASE IF EXISTS \"{self.name}\""))
-                self.logger.info(f"Database '{self.name}' dropped successfully.")
-    
+        db_name_to_check = db_name or self.config.name
+        admin_uri_str=str(self.admin_uri)
+        sync_engine=create_engine(admin_uri_str, isolation_level="AUTOCOMMIT")
+        
+        with sync_engine.connect() as connection:
+            connection.execute(text(f"""
+                SELECT pg_terminate_backend(pg_stat_activity.pid)
+                FROM pg_stat_activity
+                WHERE pg_stat_activity.datname = '{db_name_to_check}'
+                AND pid <> pg_backend_pid();
+            """))
+            self.logger.info(f"Terminated connections for database '{db_name_to_check}'.")
+            connection.execute(text(f"DROP DATABASE IF EXISTS \"{self.name}\""))
+            self.logger.info(f"Database '{self.name}' dropped successfully.")
+
     async def _column_exists_async(self, table_schema: str, table_name: str, column_name: str) -> bool:
         """Check if the specified columns exist in the table asynchronously."""
         async with self.get_session() as session:
@@ -237,7 +235,7 @@ class Database:
 
                         for column_name in column_names:
                             if(not await self.column_exists(schema_name, table_name, column_name)):
-                                message=f"Column {column_name} do not exist in table '{schema_name}.{table_name}'."
+                                message=f"Column {column_name} does not exist in table '{schema_name}.{table_name}'."
                                 self.logger.error(message)
                                 raise ValueError(message)
                         
@@ -583,13 +581,6 @@ class Database:
 
         audit_table_name = table_name+'_audit'
 
-        # Validate table names to prevent SQL injection
-        is_audit_tablename_valid=not self._is_valid_table_name(audit_table_name)
-        is_table_name_valid=not self._is_valid_table_name(table_name)
-        are_tablenames_valid=is_audit_tablename_valid or is_table_name_valid
-        if are_tablenames_valid:
-            raise ValueError("Invalid table name provided.")
-
         # Prepare queries
         create_table_query = f"""
             CREATE TABLE IF NOT EXISTS {audit_table_name} (
@@ -692,10 +683,8 @@ class Database:
             return []
     
     def paginate(
-        self,
-        conn: DatabaseConnection,
-        query: str, 
-        params: Optional[Dict[str, Any]] = None, 
+        self, conn: DatabaseConnection, 
+        query: str, params: Optional[Dict[str, Any]] = None, 
         batch_size: int = PAGINATION_BATCH_SIZE
     ) -> Generator[List[Any], None, None]:
         """Unified paginate interface for synchronous and asynchronous queries."""
