@@ -63,10 +63,10 @@ def test_database_config_invalid_pool_size():
 
 def test_valid_index_btree():
     index = ColumnIndex(
-        table_name='my_table', type='btree', columns=['column1', 'column2']
+        table_name='my_table', type='btree', column_names=['column1', 'column2']
     )
     assert index.type == 'btree'
-    assert index.columns == ['column1', 'column2']
+    assert index.column_names == ['column1', 'column2']
     assert index.expression is None
     assert index.condition is None
 
@@ -75,7 +75,7 @@ def test_invalid_index_btree_duplicate_indexes():
         ColumnIndex(
             table_name='my_table', 
             type='btree', 
-            columns=['column1', 'column1']
+            column_names=['column1', 'column1']
         )
 
     assert "Index cannot have duplicate columns." in str(excinfo.value)
@@ -83,29 +83,32 @@ def test_invalid_index_btree_duplicate_indexes():
 
 def test_valid_index_expression():
     index = ColumnIndex(
+        schema_name='public',
         table_name='my_table', 
         type='expression', 
-        columns=['column1', 'column2'], 
+        column_names=['column1', 'column2'], 
         expression='column1 + column2'
     )
     assert index.type == 'expression'
-    assert index.columns == ['column1', 'column2']
+    assert index.column_names == ['column1', 'column2']
     assert index.expression == 'column1 + column2'
 
 def test_valid_index_partial():
     index = ColumnIndex(
+        schema_name='public',
         table_name='my_table', 
         type='partial', 
-        columns=['column1'], 
+        column_names=['column1'], 
         condition='column1 IS NOT NULL'
     )
     assert index.type == 'partial'
-    assert index.columns == ['column1']
+    assert index.column_names == ['column1']
     assert index.condition == 'column1 IS NOT NULL'
 
 def test_invalid_index_type():
     with pytest.raises(ValidationError) as exc_info:
-        ColumnIndex(type='invalid_type', columns=['column1'])
+        ColumnIndex(
+            type='invalid_type', columns=['column1'])
     assert "Index type must be one of" in str(exc_info.value)
 
 def test_columns_must_be_list():
@@ -113,7 +116,7 @@ def test_columns_must_be_list():
         ColumnIndex(
             table_name='my_table', 
             type='btree', 
-            columns='not_a_list'
+            column_names='not_a_list'
         )
     
     assert "Input should be a valid list" in str(exc_info.value)
@@ -123,7 +126,7 @@ def test_expression_required_for_expression_index():
         ColumnIndex(
             table_name='my_table', 
             type='expression', 
-            columns=['column1']
+            column_names=['column1']
         )
 
     assert "Expression index must include 'expression'." in str(exc_info.value)
@@ -133,7 +136,7 @@ def test_condition_required_for_partial_index():
         ColumnIndex(
             table_name='my_table', 
             type='partial', 
-            columns=['column1']
+            column_names=['column1']
         )
     
     assert "Partial index must include 'condition'." in str(exc_info.value)
@@ -187,6 +190,7 @@ def test_database_config_validation():
 def test_validate_uri_scheme(uri, expect_exception):
     """Test if the URI scheme validation raises a ValueError for invalid schemes."""
     if expect_exception:
+
         with pytest.raises(ValueError, match="URI must start with"):
             DatabaseSettings(
                 uri=uri,
@@ -324,11 +328,11 @@ def test_get_total_count(sync_session_factory):
         batch_size=2
     )
     
-    assert paginator._get_total_count() == 4
+    assert paginator.get_total_count() == 4
 
 def test_sync_paginator_after_deleting_all_entries(sync_db_engine, sync_session_factory):
     sync_session: Session = sync_session_factory()
-    
+
     # Step 1: Delete all entries from the table
     delete_query = text("DELETE FROM test_table")
     sync_session.execute(delete_query)

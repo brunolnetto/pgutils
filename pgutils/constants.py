@@ -9,10 +9,13 @@ DEFAULT_MINIMUM_PASSWORD_SIZE = 1
 DEFAULT_ADMIN_USERNAME='postgres'
 DEFAULT_ADMIN_PASSWORD='postgres'
 
+
 VALID_SYNC_SCHEMES = [
+    "postgres",
     "postgresql", 
     "postgresql+psycopg", 
     "postgresql+psycopg2",
+    "postgresql+psycopg2cffi"
 ]
 
 VALID_ASYNC_SCHEMES = [

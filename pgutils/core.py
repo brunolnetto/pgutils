@@ -1,5 +1,7 @@
 from contextlib import contextmanager, asynccontextmanager
-from typing import Union, List, Any, Generator, AsyncGenerator, Dict, Optional
+from typing import (
+    Union, List, Any, Generator, AsyncGenerator, Callable, Dict, Optional
+)
 
 from logging import getLogger, Logger 
 from re import match
@@ -156,8 +158,8 @@ class Database:
                 "table_name": table_name
             }
             result = await session.execute(query, params)
-            
-            actual_columns = {row[0] for row in result}
+
+            actual_columns = [row[0] for row in result]
             return column_name in actual_columns
 
     def _column_exists_sync(self, table_schema: str, table_name: str, column_name: str) -> bool:
@@ -176,8 +178,7 @@ class Database:
                 "table_name": table_name
             }
             result = session.execute(query, params)
-            
-            actual_columns = {row[0] for row in result}
+            actual_columns = [row[0] for row in result]
             return column_name in actual_columns
 
     def column_exists(self, schema_name: str, table_name: str, column_name: str) -> bool:
@@ -187,42 +188,94 @@ class Database:
         else:
             return self._column_exists_sync(schema_name, table_name, column_name)
 
-    async def create_indexes(self, indexes: Dict[str, ColumnIndex]):
-        """Creates indexes based on the provided configuration."""
-        if not indexes:
-            self.logger.warning("No indexes provided for creation.")
-            return
-
-        for table_name, index_info in indexes.items():
-            missing_columns = await self.column_exists(table_name, index_info['columns'])
-            if missing_columns:
-                self.logger.error(f"Missing columns {missing_columns} in table '{table_name}'.")
-                raise ValueError(f"Columns {missing_columns} do not exist in table '{table_name}'.")
-
-            await self._create_index(table_name, index_info)
-
-    def _create_index(self, table_name: str, index_info: Dict[str, Any]):
+    def _create_indexes_sync(self, session, table_name: str, index_info: ColumnIndex):
         """Helper method to create a single index."""
-        columns = index_info['columns']
-        index_type = index_info.get('type', 'btree')
-        index_name = f"{table_name}_{'_'.join(columns)}_idx"
+        column_names = index_info.column_names
+        index_type = index_info.type
+        
+        for column_name in column_names:
+            index_name = f"{table_name}_{column_name}_idx"
 
-        for column_name in columns:
             if self._index_exists(table_name, index_name):
                 self.logger.info(f"Index {index_name} already exists on table {table_name}.")
                 return
 
-            index_stmt = DDL(
-                f"CREATE INDEX IF NOT EXISTS {table_name}_{column_name}_idx "
-                f"ON {table_name} USING {index_type} ({column_name});"
-            )
-            
+            for column_name in column_names:
+                index_stmt = DDL(
+                    f"""
+                        CREATE INDEX IF NOT EXISTS {index_name} 
+                        ON {table_name} 
+                        USING {index_type} ({column_name});
+                    """
+                )
+
+                with session.begin():
+                    session.execute(index_stmt)        
+
+    def create_indexes(self, indexes: List[ColumnIndex]):
+        """Creates indexes based on the provided configuration, synchronously or asynchronously."""
+        if not indexes:
+            self.logger.warning("No indexes provided for creation.")
+            return
+
+        indexes_names={}
+        for index_info in indexes:
+            table_name=index_info.table_name
+            indexes_names[table_name]=self.list_indexes(table_name)
+        
+        def has_index_alias(table_name, index_name):
+            return any(index == index_name for index in indexes_names[table_name])
+
+        if self.async_mode:
+            async def create_indexes_async():
+                async with self.get_session() as session:
+                    for index_info in indexes:
+                        schema_name=index_info.schema_name
+                        column_names=index_info.column_names
+                        table_name=index_info.table_name
+                        index_type = index_info.type
+
+                        for column_name in column_names:
+                            if(not await self.column_exists(schema_name, table_name, column_name)):
+                                message=f"Column {column_name} do not exist in table '{schema_name}.{table_name}'."
+                                self.logger.error(message)
+                                raise ValueError(message)
+                        
+                        for column_name in column_names:
+                            index_name = f"{table_name}_{column_name}_idx"
+
+                            if has_index_alias(table_name, index_name):
+                                self.logger.info(f"Index {index_name} already exists on table {table_name}.")
+                                return
+
+                            for column_name in column_names:
+                                index_stmt = DDL(
+                                    f"""
+                                        CREATE INDEX IF NOT EXISTS {index_name} 
+                                        ON {table_name} USING {index_type} ({column_name});
+                                    """
+                                )
+
+                                async with session.begin():
+                                    await session.execute(index_stmt)
+
+            # Run the asynchronous method if async_mode is True
+            run_async_method(create_indexes_async)
+            return
+
+        for index_info in indexes:
+            schema_name=index_info.schema_name 
+            table_name=index_info.table_name
+            column_names=index_info.column_names
+
+            for column_name in column_names:
+                if(not self.column_exists(schema_name, table_name, column_name)):
+                    message=f"Column {column_name} do not exist in table '{schema_name}.{table_name}'."
+                    self.logger.error(message)
+                    raise ValueError(message)
+
             with self.get_session() as session:
-                try:
-                    with session.begin():
-                        session.execute(index_stmt)
-                except Exception as e:
-                    self.logger.error(f"Error creating index on {table_name}: {e}")
+                self._create_indexes_sync(session, table_name, index_info)
 
     def _index_exists(self, table_name: str, index_name: str) -> bool:
         """Check if the index exists in the specified table, supporting both sync and async modes."""
@@ -302,7 +355,7 @@ class Database:
             self.logger.error(f"Health check failed: {e}")
             return False
 
-    def execute(self, sync_query: str, async_query: callable, params: dict = None):
+    def execute(self, sync_query: str, async_query: Callable, params: dict = None):
         """General method for synchronous and asynchronous query execution."""        
         if self.async_mode:
             return run_async_method(async_query, params)
@@ -315,44 +368,23 @@ class Database:
             # Execute the query
             conn_result = session.execute(query)
             rows = conn_result.fetchall()
-            
+
             # Extract results
             return [row for row in rows]
 
-    async def async_query_method(self, query: str, params: Dict):
-        """Helper method for running async queries."""
-        async with self.get_session() as session:
-            query_text=text(query).bindparams(**params) if params else text(query)
-            
-            result = await session.execute(query_text)
-            return [row for row in result]
-
-    def _execute_query_sync(self, query: str, params: Dict[str, Any] = None) -> List[Any]:
-        """Execute a prepared query and return results synchronously."""
-        with self.get_session() as conn:
-            try:
-                # Prepare and execute the query
-                query=text(query).bindparams(**params) if params else text(query)
-                result = conn.execute(query)
-        
-                return result.fetchall()
-            except ResourceClosedError:
-                return []
-
-    async def _execute_query_async(self, query: str, params: Dict[str, Any] = None) -> List[Any]:
-        """Execute a prepared query and return results asynchronously."""
-        async with self.get_session() as conn:
-            try:
-                # Prepare and execute the query
-                query=text(query).bindparams(**params) if params else text(query)
-                result = await conn.execute(query)
-                return result.fetchall()
-            except ResourceClosedError:
-                    return []
-
     def _execute_list_query(self, query: str, params: dict = None):
         """Execute a list query and return results synchronously or asynchronously."""
-        async_handler = lambda p: self.async_query_method(query, p)
+        async def async_query_method(query: str, params: Dict):
+            """Helper method for running async queries."""
+            async with self.get_session() as session:
+                query_text=text(query).bindparams(**params) if params else text(query)
+                
+                result = await session.execute(query_text)
+                return [row for row in result]
+        
+        def async_handler(p):
+             return async_query_method(query, p)
+
         return self.execute(query, async_handler, params)
 
     def create_tables(self):
@@ -362,10 +394,7 @@ class Database:
             # Asynchronous version
             async def create_tables_async():
                 async with self.engine.begin() as conn:
-                    try:
-                        await conn.run_sync(self.base.metadata.create_all)
-                    except Exception as e:
-                        self.logger.error(f"Async error creating tables: {e}")
+                    await conn.run_sync(self.base.metadata.create_all)
 
             # Run the asynchronous method if async_mode is True
             run_async_method(create_tables_async)
@@ -531,20 +560,14 @@ class Database:
         
         def _drop_tables_sync():
             """Drops all tables in the database synchronously."""
-            try:
-                self.base.metadata.drop_all(self.engine)
-                self.logger.info("Successfully dropped all tables synchronously.")
-            except Exception as e:
-                self.logger.error(f"Error dropping tables synchronously: {e}")
+            self.base.metadata.drop_all(self.engine)
+            self.logger.info("Successfully dropped all tables synchronously.")
 
         async def _drop_tables_async():
             """Asynchronously drops all tables in the database."""
-            try:
-                async with self.engine.begin() as conn:
-                    await conn.run_sync(self.base.metadata.drop_all)
-                    self.logger.info("Successfully dropped all tables asynchronously.")
-            except Exception as e:
-                self.logger.error(f"Error dropping tables asynchronously: {e}")
+            async with self.engine.begin() as conn:
+                await conn.run_sync(self.base.metadata.drop_all)
+                self.logger.info("Successfully dropped all tables asynchronously.")
 
         if self.async_mode:
             run_async_method(_drop_tables_async)  # Pass the function reference
@@ -594,12 +617,9 @@ class Database:
         """
 
         # Execute queries
-        try:
-            self.query(create_table_query)
-            self.query(create_function_query)
-            self.query(create_trigger_query)
-        except SQLAlchemyError as e:
-            raise Exception(f"An error occurred while adding the audit trigger: {str(e)}")
+        self.query(create_table_query)  
+        self.query(create_function_query)
+        self.query(create_trigger_query)
 
     def _is_valid_table_name(self, table_name: str) -> bool:
         """Validate table name against SQL injection, reserved keywords, and special characters."""
@@ -643,6 +663,23 @@ class Database:
         else:
             self._disconnect_sync()
 
+    def _execute_query_sync(self, query: str, params: Dict[str, Any] = None) -> List[Any]:
+        """Execute a prepared query and return results synchronously."""
+        with self.get_session() as conn:
+            # Prepare and execute the query
+            query=text(query).bindparams(**params) if params else text(query)
+            result = conn.execute(query)
+    
+            return result.fetchall()
+
+    async def _execute_query_async(self, query: str, params: Dict[str, Any] = None) -> List[Any]:
+        """Execute a prepared query and return results asynchronously."""
+        async with self.get_session() as conn:
+            # Prepare and execute the query
+            query=text(query).bindparams(**params) if params else text(query)
+            result = await conn.execute(query)
+            return result.fetchall()
+
     def query(self, query: str, params: Optional[Dict[str, Any]] = None) -> List[Any]:
         """Unified method to execute queries synchronously or asynchronously."""
         try:
@@ -664,17 +701,13 @@ class Database:
         """Unified paginate interface for synchronous and asynchronous queries."""
         paginator = TablePaginator(conn, query, params=params, batch_size=batch_size)
 
-        try:
-            if self.async_mode:
-                async_pages = run_async_method(paginator._async_paginated_query)
-                for page in async_pages:
-                    yield page
-            else:
-                for page in paginator._sync_paginated_query():
-                    yield page
-        except Exception as e:
-            self.logger.error(f"Pagination failed: {e}")
-            yield []  # Return an empty page in case of failure
+        if self.async_mode:
+            async_pages = run_async_method(paginator._paginated_query_async)
+            for page in async_pages:
+                yield page
+        else:
+            for page in paginator._paginated_query_sync():
+                yield page
     
     def __repr__(self):
         return f"<Database(uri={mask_sensitive_data(self.uri)}, async_mode={self.async_mode})>"
@@ -824,12 +857,9 @@ class DataCluster:
 
         self.datasources: Dict[str, Datasource] = {}
         for name, settings in settings_dict.items():
-            try:
-                # Initialize and validate datasource instance
-                self.datasources[name] = Datasource(settings, self.logger)
-                self.logger.info(f"Initialized datasource '{name}' successfully.")
-            except ValidationError as e:
-                self.logger.error(f"Invalid configuration for datasource '{name}': {e}")
+            # Initialize and validate datasource instance
+            self.datasources[name] = Datasource(settings, self.logger)
+            self.logger.info(f"Initialized datasource '{name}' successfully.")
 
     def get_datasource(self, name: str) -> Datasource:
         """Returns the datasource instance for the given name."""
@@ -860,20 +890,14 @@ class DataCluster:
     def create_tables_all(self):
         """Creates tables for all datasources."""
         for name, datasource in self.datasources.items():
-            try:
-                datasource.create_tables_all()
-                self.logger.info(f"Tables created for datasource '{name}' successfully.")
-            except Exception as e:
-                self.logger.error(f"Failed to create tables for datasource '{name}': {e}")
+            datasource.create_tables_all()
+            self.logger.info(f"Tables created for datasource '{name}' successfully.")
 
     def disconnect_all(self):
         """Disconnects all datasources."""
         for name, datasource in self.datasources.items():
-            try:
-                datasource.disconnect_all()
-                self.logger.info(f"Disconnected datasource '{name}' successfully.")
-            except Exception as e:
-                self.logger.error(f"Failed to disconnect datasource '{name}': {e}")
+            datasource.disconnect_all()
+            self.logger.info(f"Disconnected datasource '{name}' successfully.")
 
     def __repr__(self) -> str:
         return f"<DataCluster(datasources={list(self.datasources.keys())})>"

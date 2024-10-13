@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any
+from typing import Any, Callable
 from pydantic import AnyUrl
 
 from sqlalchemy.engine.url import make_url, URL
@@ -38,20 +38,24 @@ def validate_postgresql_uri(uri: str, allow_async: bool = False):
     return uri  # Return valid URI if all checks pass
 
 
-def run_async_method(async_method, *args, **kwargs) -> Any:
+def run_async_method(async_method: Callable, *args, **kwargs) -> Any:
     """Run an arbitrary asynchronous method in an agnostic way."""
+    # Check if async_method is indeed callable
+    if not callable(async_method):
+        raise ValueError("The provided method must be callable.")
+
     try:
-        # Get the current event loop (should be the same in pytest)
+        # Get the current event loop
         loop = asyncio.get_event_loop()
-        
         if loop.is_running():
+            
             # If the event loop is running, create a task for it
             return asyncio.ensure_future(async_method(*args, **kwargs))
         else:
             # If no running loop, use asyncio.run for synchronous environments
             return loop.run_until_complete(async_method(*args, **kwargs))
     except RuntimeError:
-        # If there's no event loop and you aren't testing, raise an error or use asyncio.run
+        # If there's no event loop, we can create a new one and run the async method
         return asyncio.run(async_method(*args, **kwargs))
 
 

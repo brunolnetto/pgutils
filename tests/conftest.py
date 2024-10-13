@@ -59,7 +59,7 @@ def databases_settings():
     }
 
 @pytest.fixture(scope="module")
-def same_database_settings():
+def database_settings():
     settings_dict = {
         "sync": {
             "uri": f"postgresql+psycopg://postgres:postgres@localhost:{DEFAULT_PORT}/db",
@@ -70,6 +70,13 @@ def same_database_settings():
         },
         "async": {
             "uri": f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}/db",
+            "admin_username": "postgres",
+            "admin_password": "postgres",
+            "async_mode": True,
+            "auto_create_db": True
+        },
+        "invalid": {
+            "uri": f"postgresql+asyncpg://postgres:postgres@anotherhost:{DEFAULT_PORT}/db",
             "admin_username": "postgres",
             "admin_password": "postgres",
             "async_mode": True,

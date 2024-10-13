@@ -97,6 +97,12 @@ async def test_run_async_method_no_event_loop():
     
     assert result == 10
 
+
+def test_run_async_method_with_non_callable():
+    """Test running an async method with no current event loop."""
+    with pytest.raises(ValueError) as exc:
+        run_async_method('not_callable', 5)
+
 @pytest.mark.asyncio
 async def test_run_async_method_with_running_event_loop():
     """Test running an async method with an existing running event loop."""

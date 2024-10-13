@@ -50,8 +50,7 @@ def populate_database(uri: str, db_name: str):
     
     # Create the test table and populate it with data
     with default_engine.connect() as conn:
-        try:
-            # Create the table
+        # Create the table
             conn.execute(
                 text(
                     """
@@ -89,9 +88,6 @@ def populate_database(uri: str, db_name: str):
                 """)
             )
             conn.commit()
-
-        except Exception as e:
-            print(f"Error during table operations: {e}")
 
 def prepare_database(admin_uri: AnyUrl, data_uri: AnyUrl, db_name):
     admin_uri = convert_to_sync_dsn(admin_uri)

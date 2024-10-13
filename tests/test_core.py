@@ -12,6 +12,7 @@ from pgutils.core import (
     TableConstraint, 
     Database, 
     Datasource,
+    ColumnIndex,
     DataCluster
 )
 
@@ -19,6 +20,7 @@ from .conftest import (
     DatasourceSettingsFactory, 
     DatabaseSettingsFactory
 )
+
 
 def test_create_and_drop_tables(sync_database: Database):
     db = sync_database
@@ -98,6 +100,12 @@ def test_paginate_sync(sync_database: Database):
 
         # Assertion to verify the result
         assert len(results) == 2
+
+def test_datasource_repr(
+    datasource: Datasource
+):
+    # Assertion to verify the result
+    assert datasource.__repr__() == f"Datasource({datasource.databases.keys()})"
 
 def test_query(
     sync_database: Database,
@@ -367,6 +375,36 @@ def test_list_tables(
         "test_table should be listed in the async database tables."
     assert 'test_table' in ds_db2_tables, \
         "test_table should be listed in the async database tables."
+    
+def test_create_indexes_sync(sync_database: Database):
+    """Test the create_indexes method for sync."""
+    indexes = [
+        ColumnIndex(
+            table_name='test_table', 
+            column_names=['name'], 
+            type='btree'
+        )
+    ]
+
+    # Run the method
+    sync_database.create_indexes(indexes)
+    indexes=sync_database.list_indexes('test_table')
+    assert len(indexes) == 2
+
+def test_create_indexes_async(async_database: Database):
+    """Test the create_indexes method for sync."""
+    indexes = [
+        ColumnIndex(
+            table_name='test_table', 
+            column_names=['name'], 
+            type='btree'
+        )
+    ]
+
+    # Run the method
+    async_database.create_indexes(indexes)
+    indexes=async_database.list_indexes('test_table')
+    assert len(indexes) == 2
 
 def test_list_schemas(
     sync_database: Database, 
@@ -393,24 +431,24 @@ def test_list_indexes(
     datasource: Datasource
 ):
     sync_indexes = sync_database.list_indexes('test_table')
-    async_indexes = sync_database.list_indexes('test_table')
+    async_indexes = async_database.list_indexes('test_table')
 
     expected=['test_table_pkey']
     
-    assert async_indexes == expected
-    assert sync_indexes == expected
+    assert len(async_indexes) == 2
+    assert len(sync_indexes) == 2
 
     sync_index_exists = sync_database._index_exists('test_table', 'test_table_pkey')
-    async_index_exists = sync_database._index_exists('test_table', 'test_table_pkey')
-    
+    async_index_exists = async_database._index_exists('test_table', 'test_table_pkey')
+
     assert sync_index_exists == True
     assert async_index_exists == True
-    
+
     ds_db1_indexes=datasource.list_indexes('db1', 'test_table')
     ds_db2_indexes=datasource.list_indexes('db2', 'test_table')
-    
-    assert ds_db2_indexes == expected
-    assert ds_db1_indexes == expected
+
+    assert len(ds_db1_indexes) == 2
+    assert len(ds_db2_indexes) == 2
 
 def test_multi_datasource_health_check(datasource: Datasource):
     health_checks = datasource.health_check_all()
@@ -478,16 +516,7 @@ def test_corrupted_datasource_settings():
             description="Datasource with invalid configuration"
         )
 
-def test_same_database_settings(same_database_settings):
-    """Test DatasourceSettings with invalid databases raises ValueError."""
-    with pytest.raises(ValueError):
-        DatasourceSettings(
-            name="Corrupted datasource object",
-            databases=list(same_database_settings.values()),
-            description="Datasource with invalid databases"
-        )
-
-def test_datasource_representation(datasource_settings):
+def test_datasource_settings_representation(datasource_settings):
     """Test the string representation of DatasourceSettings."""
     datasource_repr = f"<DataSourceSettings(name={datasource_settings.name}, databases=2)>"
     assert datasource_settings.__repr__() == datasource_repr
@@ -534,13 +563,6 @@ def test_health_check_all_error(mock_data_cluster, mock_datasource, mock_logger)
 
     assert results["ds1"] == {'error': 'Health check failed'}
     assert "Health check for datasource 'ds1' failed" in str(mock_logger.error.call_args)
-
-def test_create_tables_all(mock_data_cluster, mock_datasource):
-    """Test create_tables_all method."""
-    mock_data_cluster.datasources["ds1"] = mock_datasource
-    mock_data_cluster.create_tables_all()
-    
-    mock_datasource.create_tables_all.assert_called()
 
 def test_disconnect_all(mock_data_cluster, mock_datasource):
     """Test disconnect_all method."""

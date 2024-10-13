@@ -107,34 +107,16 @@ class DatasourceSettings(BaseModel):
         if not databases:
             raise ValueError("At least one database must be defined.")
 
-        # Check for unique database names and consistent host/port
-        names = set()
-        parsed_uris = []
-        for db in databases:
-            if db.name in names:
-                raise ValueError(f"Database name '{db.name}' must be unique within the data source.")
-            names.add(db.name)
-
-            # Parse the URI to check for consistent host and port
-            parsed_uris.append((db.uri.host, db.uri.port))
-
-        if len(set(parsed_uris)) > 1:
-            raise ValueError("All databases must have the same host and port.")
-
         return databases
-
-    @property
-    def admin_uri(self) -> AnyUrl:
-        """Constructs the admin URI using the first database."""
-        return construct_admin_uri(self.databases[0].uri, self.admin_username, self.admin_password)
 
     def __repr__(self):
         return f"<DataSourceSettings(name={self.name}, databases={len(self.databases)})>"
 
 class ColumnIndex(BaseModel):
-    type: str
+    schema_name: str = 'public'
     table_name: str
-    columns: List[str]
+    column_names: List[str]
+    type: str
     expression: Optional[str] = None
     condition: Optional[str] = None
 
@@ -158,12 +140,12 @@ class ColumnIndex(BaseModel):
 
         return self
 
-    @field_validator('columns')
-    def check_columns(cls, columns: List[str]) -> List[str]:
-        if len(set(columns)) != len(columns):
+    @field_validator('column_names')
+    def check_column_names(cls, column_names: List[str]) -> List[str]:
+        if len(set(column_names)) != len(column_names):
             raise ValueError("Index cannot have duplicate columns.")
         
-        return columns
+        return column_names
 
 
 class TableConstraint(BaseModel):
@@ -259,58 +241,61 @@ class TablePaginator:
         # Validate query upon initialization
         self._validate_query()
 
-    def _get_total_count(self) -> int:
-        """Fetch the total count of records synchronously."""
-        count_query = f"SELECT COUNT(*) FROM ({self.query}) as total"
-        result = self.conn.execute(text(count_query).bindparams(**self.params))
-        return result.scalar()
-
     def _validate_query(self) -> None:
         """Validate the query before using it for pagination."""
         validator = QueryValidator(self.query)
         validator.validate()
 
+    def _get_total_count_sync(self) -> int:
+        """Fetch the total count of records synchronously."""
+        count_query = f"SELECT COUNT(*) FROM ({self.query}) as total"
+        result = self.conn.execute(text(count_query).bindparams(**self.params))
+        return result.scalar()
+
     async def _get_total_count_async(self) -> int:
         """Fetch the total count of records asynchronously."""
-        count_query = f"SELECT COUNT(*) FROM ({self.query}) as total"
+        count_query = f"SELECT COUNT(1) FROM ({self.query}) as total"
         result = await self.conn.execute(text(count_query).bindparams(**self.params))
         return result.scalar()
+    
+    def get_total_count(self) -> int:
+        """Fetch the total count using the run_async_method utility."""
+        if isinstance(self.conn, (AsyncConnection, AsyncSession)):
+            return run_async_method(self._get_total_count_async)
+        return self._get_total_count_sync()
 
     def _get_batch_query(self) -> str:
         """Construct a paginated query with LIMIT and OFFSET."""
         return f"{self.query} LIMIT :limit OFFSET :offset"
 
-    def _fetch_batch(self) -> List[Any]:
+    def _fetch_batch_sync(self) -> List[Any]:
         """Fetch a single batch synchronously."""
         batch_query = text(self._get_batch_query()).bindparams(
-            limit=self.batch_size,
-            offset=self.current_offset,
-            **self.params
+            limit=self.batch_size, offset=self.current_offset, **self.params
         )
         result: Result = self.conn.execute(batch_query)
         return result.fetchall()
 
     async def _fetch_batch_async(self) -> List[Any]:
         """Fetch a single batch asynchronously."""
-        batch_query = text(self._get_batch_query()).bindparams(
-            limit=self.batch_size,
-            offset=self.current_offset,
-            **self.params
+        query_text=text(self._get_batch_query())
+        batch_query = query_text.bindparams(
+            limit=self.batch_size, offset=self.current_offset, **self.params
         )
         result = await self.conn.execute(batch_query)
         return result.fetchall()
 
-    def _sync_paginated_query(self) -> SyncPageGenerator:
+    def _paginated_query_sync(self) -> SyncPageGenerator:
         """Synchronous generator to fetch results batch by batch."""
         if self.total_count is None:
-            self.total_count = self._get_total_count()
+            self.total_count = self._get_total_count_sync()
 
         while self.current_offset < self.total_count:
-            batch = self._fetch_batch()
+            batch = self.fetch_batch()
             yield batch
             self.current_offset += self.batch_size
 
-    async def _async_paginated_query(self) -> AsyncPageGenerator:
+    async def _paginated_query_async(self) -> AsyncPageGenerator:
         """Asynchronous generator to fetch results batch by batch."""
         if self.total_count is None:
             self.total_count = await self._get_total_count_async()
@@ -323,18 +308,12 @@ class TablePaginator:
     def paginate(self) -> PageGenerator:
         """Unified paginate method to handle both sync and async queries."""
         if isinstance(self.conn, (AsyncConnection, AsyncSession)):
-            return self._async_paginated_query()
+            return self._paginated_query_async()
         else:
-            return self._sync_paginated_query()
-
-    def fetch_total_count(self) -> int:
-        """Fetch the total count using the run_async_method utility."""
-        if isinstance(self.conn, (AsyncConnection, AsyncSession)):
-            return run_async_method(self._get_total_count_async)
-        return self._get_total_count()
+            return self._paginated_query_sync()
 
     def fetch_batch(self) -> List[Any]:
         """Fetch a batch using the run_async_method utility."""
         if isinstance(self.conn, (AsyncConnection, AsyncSession)):
             return run_async_method(self._fetch_batch_async)
-        return self._fetch_batch()
+        return self._fetch_batch_sync()
