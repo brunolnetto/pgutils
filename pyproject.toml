@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "pgutils"
-version = "0.0.1"
+version = "0.0.2"
 description = "A library to help managing multiple database connections using SQLAlchemy with PostgreSQL"
 authors = ["Bruno Peixoto <brunolnetto@gmail.com>"]
 license = "MIT"
