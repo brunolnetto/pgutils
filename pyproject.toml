@@ -4,6 +4,15 @@ version = "0.0.2"
 description = "A library to help managing multiple database connections using SQLAlchemy with PostgreSQL"
 authors = ["Bruno Peixoto <brunolnetto@gmail.com>"]
 license = "MIT"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/brunolnetto/pgutils"
+Issues = "https://github.com/brunolnetto/pgutils/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
