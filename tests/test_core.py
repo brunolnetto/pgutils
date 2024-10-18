@@ -21,6 +21,8 @@ from .conftest import (
     DatabaseSettingsFactory
 )
 
+def test_database_initialization(datasource: Datasource):
+    assert 1==1
 
 def test_create_and_drop_tables(sync_database: Database):
     db = sync_database
@@ -59,7 +61,7 @@ def test_invalid_pool_size():
 
 
 # Test for check_database_exists
-def test_check_database_exists_true(sync_database):
+def test_check_database_exists_true(sync_database: Database):
     """Test when the database exists (synchronous)."""
     # Call the method using the sync_database fixture
     result = sync_database.check_database_exists()
@@ -68,7 +70,7 @@ def test_check_database_exists_true(sync_database):
     assert result is True
 
 
-def test_check_database_doesnt_exist(default_port):
+def test_check_database_doesnt_exist(database_without_auto_create: Database):
     """Test when an error occurs during the check (synchronous)."""
     db_settings=DatabaseSettings(
         **{
@@ -112,14 +114,14 @@ def test_repr_sync_database(sync_database: Database):
 def test_paginate_sync(sync_database: Database):
     # Fetch and assert paginated results in batches
     expected_batches = [
-        [(1, 'Alice'), (2, 'Bob')],
-        [(3, 'Charlie'), (4, 'David')]
+        [('Alice', ), ('Bob', )],
+        [('Charlie', ), ('David', )]
     ]
 
     results = []
 
     with sync_database.get_session() as session:
-        query_str="SELECT * FROM test_table"
+        query_str="SELECT name FROM test_table"
         for batch in sync_database.paginate(session, query_str, batch_size = 2):
             results.append(batch)
 

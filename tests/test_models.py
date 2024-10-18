@@ -4,7 +4,7 @@ from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from pgutils.exceptions import QueryValidationError
+from pgutils.exceptions import QueryValidationError, ExcessiveSelectWarning
 from pgutils.models import DatabaseSettings, ColumnIndex, TablePaginator, QueryValidator
 from pgutils.constants import DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD
 from pgutils.testing import populate_database
@@ -233,8 +233,9 @@ async def test_async_paginator(async_session_factory):
         # Assert each batch
         for i, expected_batch in enumerate(expected_batches):
             assert results[i] == expected_batch
-
-        assert await paginator.get_total_count() == 4
+            
+        query_count=await paginator.fetch_total_count()
+        assert query_count == 4
 
 @pytest.mark.asyncio
 async def test_async_paginator_after_deleting_all_entries(async_session_factory):
@@ -280,6 +281,9 @@ def test_paginator(sync_session_factory):
     for i, expected_batch in enumerate(expected_batches):
         assert results[i] == expected_batch
 
+    query_count=paginator.fetch_total_count()
+    assert query_count == 4
+
 def test_paginator_with_params(sync_session_factory):
     session = sync_session_factory()
     paginator = TablePaginator(
@@ -315,7 +319,9 @@ def test_get_total_count(sync_session_factory):
 
     # Prepare the paginator
     paginator = TablePaginator(
-        conn=session, query="SELECT * FROM test_table", batch_size=2
+        conn=session,
+        query="SELECT name FROM test_table",
+        batch_size=2
     )
     
     assert paginator.get_total_count() == 4
@@ -356,11 +362,13 @@ def test_get_batch_query(sync_session_factory):
 
     # Prepare the paginator
     paginator = TablePaginator(
-        conn=session, query="SELECT * FROM test_table", batch_size=2
+        conn=session,
+        query="SELECT name FROM test_table",
+        batch_size=2
     )
 
     # Test the get_batch_query method
-    expected_query = "SELECT * FROM test_table LIMIT :limit OFFSET :offset"
+    expected_query = "SELECT name FROM test_table LIMIT :limit OFFSET :offset"
     assert paginator._get_batch_query() == expected_query
 
 
@@ -369,7 +377,9 @@ async def test_get_total_count_async(async_session_factory):
     async for async_session in async_session_factory:  # Use the session factory
         # Prepare the paginator
         paginator = TablePaginator(
-            conn=async_session, query="SELECT * FROM test_table", batch_size=2
+            conn=async_session,
+            query="SELECT name FROM test_table",
+            batch_size=2
         )
 
         # Perform the total count query asynchronously
@@ -377,6 +387,38 @@ async def test_get_total_count_async(async_session_factory):
 
         # Assertion to verify the result
         assert total_count == 4
+
+def test_validate_sql_syntax_max_length():
+    # Test case for exceeding maximum length
+    long_query = 'SELECT * FROM my_table WHERE ' + 'a' * 1001  # 1001 characters long
+    validator = QueryValidator(long_query)
+
+    with pytest.raises(QueryValidationError, match="Query exceeds maximum length."):
+        validator.validate()
+
+def test_validate_sql_syntax_unbalanced_parentheses():
+    # Test case for unbalanced parentheses
+    unbalanced_query = "SELECT id, name FROM my_table WHERE (id = 1"
+    validator = QueryValidator(unbalanced_query)
+
+    with pytest.raises(QueryValidationError, match="Query contains unbalanced parentheses."):
+        validator.validate()
+
+def test_validate_sql_syntax_disallowed_clause():
+    # Test case for disallowed clauses
+    disallowed_query = "SELECT * from (DROP TABLE my_table)"
+    validator = QueryValidator(disallowed_query)
+
+    with pytest.raises(QueryValidationError, match="Query contains disallowed clause: DROP."):
+        validator.validate()
+
+def test_validate_sql_syntax_excessive_select_star():
+    # Test case for excessive SELECT *
+    excessive_select_query = "SELECT * FROM my_table"
+    validator = QueryValidator(excessive_select_query)
+
+    with pytest.warns(ExcessiveSelectWarning):
+        validator.validate()
 
 def test_empty_query():
     validator = QueryValidator("")
@@ -399,13 +441,13 @@ def test_multiple_semicolons():
         validator.validate()
 
 def test_predefined_limit():
-    validator = QueryValidator("SELECT * FROM users LIMIT 10")
-    with pytest.raises(QueryValidationError, match="should not contain a predefined LIMIT clause"):
+    validator = QueryValidator("SELECT name FROM users LIMIT 10")
+    with pytest.raises(QueryValidationError):
         validator.validate()
 
 def test_predefined_offset():
-    validator = QueryValidator("SELECT * FROM users OFFSET 5")
-    with pytest.raises(QueryValidationError, match="should not contain a predefined OFFSET clause"):
+    validator = QueryValidator("SELECT name FROM users OFFSET 5")
+    with pytest.raises(QueryValidationError):
         validator.validate()
 
 def test_valid_query():

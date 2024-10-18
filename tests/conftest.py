@@ -14,7 +14,7 @@ from pgutils.core import Database, Datasource, DataCluster
 from pgutils.models import DatabaseSettings, DatasourceSettings
 from pgutils.testing import prepare_database
 
-DEFAULT_PORT=5432
+DEFAULT_PORT=5433
 
 # Database configuration constants
 DB_NAME = "mydb"
@@ -183,8 +183,9 @@ async def async_session_factory():
         expire_on_commit=False,
     )
 
+    # Yield the session for usage in tests
     async with async_session_maker() as async_session:
-        yield async_session  # Yield the session for usage in tests
+        yield async_session
 
     # Ensure engine disposal after the session is done
     await async_engine.dispose()
@@ -198,6 +199,7 @@ class LoggerMock:
     def __init__(self):
         self.info = MagicMock()
         self.error = MagicMock()
+        self.warning = MagicMock()
 
 class DatabaseSettingsFactory(factory.Factory):
     class Meta:
@@ -233,23 +235,53 @@ def mock_datasource():
     """Fixture for mocking a Datasource instance."""
     return create_autospec(Datasource)
 
+def create_mocked_datasource():
+    """Create a mocked Datasource instance using factories."""
+    # Generate DatasourceSettings using the factory
+    datasource_settings = DatasourceSettingsFactory()
+
+    # Create the Datasource instance with the generated datasource settings
+    mock_logger = LoggerMock()
+    datasource = Datasource(datasource_settings, mock_logger)
+
+    # Mock the databases within the Datasource
+    datasource.databases = {
+        db.name: MagicMock(
+            spec=DatabaseSettings, 
+            name=db.name
+        ) for db in datasource_settings.databases
+    }
+
+    # Mock methods for each database
+    for db in datasource.databases.values():
+        db.connect = MagicMock()
+        db.disconnect = MagicMock()
+        db.create_database = MagicMock()
+
+    return datasource
+
 def create_mocked_data_cluster():
     """Create a mocked DataCluster instance using factories."""
     # Generate DatasourceSettings using the factory
-    datasource_settings = {
+    datasource_settings: Dict[
+        str, DatasourceSettingsFactory
+    ] = {
         "ds1": DatasourceSettingsFactory(name="ds1"),
         "ds2": DatasourceSettingsFactory(name="ds2"),
     }
     
     # Create a mock logger
-    mock_logger = MagicMock()  # You can specify the logger's behavior if needed
+    mock_logger = LoggerMock()
 
     # Create the DataCluster instance with the generated datasource settings
     data_cluster = DataCluster(datasource_settings, mock_logger)
 
     # Mock the datasources within the DataCluster
     data_cluster.datasources = {
-        ds.name: MagicMock(spec=DatasourceSettings, name=ds.name) for ds in datasource_settings.values()
+        ds.name: MagicMock(
+            spec=DatasourceSettings, 
+            name=ds.name
+        ) for ds in datasource_settings.values()
     }
 
     # Mock methods for each datasource

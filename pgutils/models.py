@@ -4,6 +4,7 @@ from typing import (
 )
 from typing_extensions import Self
 from pydantic import BaseModel
+import warnings
 import re
 
 from pydantic import (
@@ -42,8 +43,9 @@ from .constants import (
     VALID_SCHEMES,
     VALID_INDEX_TYPES,
 )
-from .exceptions import QueryValidationError
+from .exceptions import QueryValidationError, ExcessiveSelectWarning
 
+AsyncDatabaseInteraction=(AsyncConnection, AsyncSession)
 class DatabaseSettings(BaseModel):
     uri: AnyUrl
     admin_username: str = Field(
@@ -206,6 +208,11 @@ class QueryValidator:
     def _validate_sql_syntax(self) -> None:
         """Simple validation to ensure query contains necessary clauses."""
         upper_query = self.query.upper()
+        
+        # Check for maximum length
+        max_length = 1000  # Set a reasonable maximum length
+        if len(self.query) > max_length:
+            raise QueryValidationError("Query exceeds maximum length.")
 
         # Ensure query contains SELECT and FROM
         if 'SELECT' not in upper_query or 'FROM' not in upper_query:
@@ -214,6 +221,23 @@ class QueryValidator:
         # Ensure no multiple semicolons or unsafe characters
         if re.search(r";\s*;", self.query):
             raise QueryValidationError("Query contains multiple semicolons, which is unsafe.")
+        
+        # Check for balanced parentheses
+        if self.query.count('(') != self.query.count(')'):
+            raise QueryValidationError("Query contains unbalanced parentheses.")
+
+        # Ensure that the SELECT statement does not contain disallowed clauses
+        disallowed_clauses = ['DROP', 'DELETE', 'UPDATE']
+        for clause in disallowed_clauses:
+            if clause in upper_query:
+                raise QueryValidationError(f"Query contains disallowed clause: {clause}.")
+
+        # Check for excessive SELECT *
+        if 'SELECT *' in upper_query:
+            warnings.warn(
+                "Using SELECT * is discouraged. Specify the columns instead.",
+                ExcessiveSelectWarning
+            )
 
     def _check_limit_offset(self) -> None:
         """Ensure no pre-existing LIMIT or OFFSET in query."""
@@ -305,7 +329,13 @@ class TablePaginator:
 
     def paginate(self) -> PageGenerator:
         """Unified paginate method to handle both sync and async queries."""
-        if isinstance(self.conn, (AsyncConnection, AsyncSession)):
-            return self._paginated_query_async()
+        if isinstance(self.conn, AsyncDatabaseInteraction):
+            return self._async_paginated_query()
         else:
-            return self._paginated_query_sync()
+            return self._sync_paginated_query()
+
+    def fetch_total_count(self) -> int:
+        """Fetch the total count using the run_async_method utility."""
+        if isinstance(self.conn, AsyncDatabaseInteraction):
+            return run_async_method(self._get_total_count_async)
+        return self._get_total_count()
