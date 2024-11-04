@@ -16,17 +16,21 @@ from sqlalchemy.exc import (
     ResourceClosedError, 
     SQLAlchemyError
 )
+from sqlalchemy.engine import Connection
+from sqlalchemy.ext.asyncio import AsyncSession, AsyncConnection
 
 from .models import (
     DatasourceSettings, 
     DatabaseSettings, 
     TableConstraint, Trigger, ColumnIndex, TablePaginator
 )
+
 from .utils import (
     run_async_method, mask_sensitive_data, construct_admin_uri, construct_complete_uri
 )
 from .constants import PAGINATION_BATCH_SIZE
-from .types import DatabaseConnection
+
+DatabaseConnection = Union[Session, AsyncSession, Connection, AsyncConnection]
 
 class Database:
     """

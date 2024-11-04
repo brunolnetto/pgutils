@@ -2,7 +2,9 @@ from typing import (
     Dict, List, Any, 
     Optional
 )
-from typing_extensions import Self
+from typing_extensions import (
+    Self, List, Any, Generator, AsyncGenerator, Union
+)
 from pydantic import BaseModel
 import warnings
 import re
@@ -19,12 +21,10 @@ from sqlalchemy.engine.url import make_url
 from sqlalchemy.engine import Result
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from .types import (
-    SyncPageGenerator, 
-    AsyncPageGenerator, 
-    PageGenerator, 
-    DatabaseConnection
-)
+AsyncPageGenerator = AsyncGenerator[List[Any], None] 
+SyncPageGenerator = Generator[List[Any], None, None]
+PageGenerator = Union[AsyncPageGenerator, SyncPageGenerator]
+
 from .utils import (
     validate_postgresql_uri, 
     construct_uri, 
