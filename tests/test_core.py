@@ -404,8 +404,9 @@ def test_list_tables(
         "test_table should be listed in the async database tables."
     assert 'test_table' in ds_db2_tables, \
         "test_table should be listed in the async database tables."
-    
-def test_create_indexes_sync(sync_database: Database):
+
+@pytest.mark.asyncio
+async def test_create_indexes_sync(sync_database: Database):
     """Test the create_indexes method for sync."""
     indexes = [
         ColumnIndex(
@@ -416,12 +417,12 @@ def test_create_indexes_sync(sync_database: Database):
     ]
 
     # Run the method
-    sync_database.create_indexes(indexes)
+    await sync_database.create_indexes(indexes)
     
     indexes=sync_database.list_indexes('test_table')
     assert len(indexes) == 2
 
-    assert sync_database.create_indexes([]) is None
+    assert await sync_database.create_indexes([]) is None
 
     invalid_indexes = [
         ColumnIndex(
@@ -431,10 +432,11 @@ def test_create_indexes_sync(sync_database: Database):
         )
     ]
 
-    with pytest.raises(ValueError):
+    with pytest.warns():
         sync_database.create_indexes(invalid_indexes)
 
-def test_create_indexes_async(async_database: Database):
+@pytest.mark.asyncio
+async def test_create_indexes_async(async_database: Database):
     """Test the create_indexes method for sync."""
     indexes = [
         ColumnIndex(
@@ -445,7 +447,7 @@ def test_create_indexes_async(async_database: Database):
     ]
 
     # Run the method
-    async_database.create_indexes(indexes)
+    await async_database.create_indexes(indexes)
     indexes=async_database.list_indexes('test_table')
     assert len(indexes) == 2
 

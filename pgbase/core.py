@@ -189,24 +189,31 @@ class Database:
         else:
             return self._column_exists_sync(schema_name, table_name, column_name)
 
-    async def create_indexes(self, indexes: Dict[str, ColumnIndex]):
+    async def create_indexes(self, indexes: List[ColumnIndex]):
         """Creates indexes based on the provided configuration."""
         if not indexes:
             self.logger.warning("No indexes provided for creation.")
             return
 
-        for table_name, index_info in indexes.items():
-            missing_columns = await self.column_exists(table_name, index_info['columns'])
+        for index_info in indexes:
+            table_name=index_info.table_name
+            schema_name=index_info.schema_name
+            missing_columns = [
+                column_name
+                for column_name in index_info.column_names
+                if not self.column_exists(schema_name, table_name, column_name)
+            ]
             if missing_columns:
                 self.logger.error(f"Missing columns {missing_columns} in table '{table_name}'.")
                 raise ValueError(f"Columns {missing_columns} do not exist in table '{table_name}'.")
 
-            await self._create_index(table_name, index_info)
+            self._create_index(index_info)
 
-    def _create_index(self, table_name: str, index_info: Dict[str, Any]):
+    def _create_index(self, index_info: ColumnIndex):
         """Helper method to create a single index."""
-        columns = index_info['columns']
-        index_type = index_info.get('type', 'btree')
+        table_name=index_info.table_name
+        columns = index_info.column_names
+        index_type = index_info.type
         index_name = f"{table_name}_{'_'.join(columns)}_idx"
 
         for column_name in columns:
@@ -405,7 +412,9 @@ class Database:
 
         return [
             index_tuple[0]
-            for index_tuple in self._execute_list_query(sync_query, {'table_name': table_name})
+            for index_tuple in self._execute_list_query(
+                sync_query, {'table_name': table_name}
+            )
         ]
 
     # 4. List Views
