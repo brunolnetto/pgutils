@@ -330,12 +330,12 @@ class TablePaginator:
     def paginate(self) -> PageGenerator:
         """Unified paginate method to handle both sync and async queries."""
         if isinstance(self.conn, AsyncDatabaseInteraction):
-            return self._async_paginated_query()
+            return self._paginated_query_async()
         else:
-            return self._sync_paginated_query()
+            return self._paginated_query_sync()
 
     def fetch_total_count(self) -> int:
         """Fetch the total count using the run_async_method utility."""
         if isinstance(self.conn, AsyncDatabaseInteraction):
             return run_async_method(self._get_total_count_async)
-        return self._get_total_count()
+        return self.get_total_count()
