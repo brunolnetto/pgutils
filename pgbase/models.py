@@ -1,29 +1,17 @@
-from typing import (
-    Dict, List, Any, 
-    Optional
-)
+from typing import Dict, List, Any, Optional
 from typing_extensions import (
     Self, List, Any, Generator, AsyncGenerator, Union
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, AnyUrl, field_validator, model_validator, Field
 import warnings
 import re
 
-from pydantic import (
-    AnyUrl, 
-    field_validator, 
-    model_validator, 
-    Field 
-)
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text
-from sqlalchemy.engine.url import make_url
-from sqlalchemy.engine import Result
-from sqlalchemy.ext.asyncio import AsyncConnection
 
-AsyncPageGenerator = AsyncGenerator[List[Any], None] 
-SyncPageGenerator = Generator[List[Any], None, None]
-PageGenerator = Union[AsyncPageGenerator, SyncPageGenerator]
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, AsyncConnection
+from sqlalchemy.engine.url import make_url
+from sqlalchemy.engine import Result, Connection
+from sqlalchemy.orm import Session
 
 from .utils import (
     validate_postgresql_uri, 
@@ -43,9 +31,23 @@ from .constants import (
     VALID_SCHEMES,
     VALID_INDEX_TYPES,
 )
-from .exceptions import QueryValidationError, ExcessiveSelectWarning
+
+AsyncPageGenerator = AsyncGenerator[List[Any], None] 
+SyncPageGenerator = Generator[List[Any], None, None]
+PageGenerator = Union[AsyncPageGenerator, SyncPageGenerator]
+DatabaseConnection = Union[Session, AsyncSession, Connection, AsyncConnection]
 
 AsyncDatabaseInteraction=(AsyncConnection, AsyncSession)
+
+class QueryValidationError(Exception):
+    """Exception for invalid queries."""
+    pass
+
+class ExcessiveSelectWarning(Warning):
+    """Warning raised for the use of SELECT * in SQL queries."""
+    pass
+
+
 class DatabaseSettings(BaseModel):
     uri: AnyUrl
     admin_username: str = Field(
