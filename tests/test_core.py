@@ -6,7 +6,7 @@ from typing import Dict
 
 from sqlalchemy import Column, Integer, String
 
-from pgutils.core import (
+from pgbase.core import (
     DatabaseSettings, 
     DatasourceSettings, 
     TableConstraint, 
@@ -18,7 +18,8 @@ from pgutils.core import (
 
 from .conftest import (
     DatasourceSettingsFactory, 
-    DatabaseSettingsFactory
+    DatabaseSettingsFactory,
+    DEFAULT_PORT,
 )
 
 def test_database_initialization(datasource: Datasource):
@@ -74,7 +75,7 @@ def test_check_database_doesnt_exist(database_without_auto_create: Database):
     """Test when an error occurs during the check (synchronous)."""
     db_settings=DatabaseSettings(
         **{
-            "uri": f"postgresql://postgres:postgres@localhost:{default_port}/db_test",
+            "uri": f"postgresql://postgres:postgres@localhost:{DEFAULT_PORT}/db_test",
             "admin_username": "postgres",
             "admin_password": "postgres",
             "async_mode": False,

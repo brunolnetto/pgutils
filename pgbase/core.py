@@ -122,7 +122,9 @@ class Database:
 
     def drop_database_if_exists(self):
         """Drops the database if it exists."""
-        if self.config.name:
+        db_name=self.config.name
+        
+        if db_name:
             admin_uri_str=str(self.admin_uri)
             sync_engine=create_engine(
                 admin_uri_str, 
@@ -133,12 +135,12 @@ class Database:
                 connection.execute(text(f"""
                     SELECT pg_terminate_backend(pg_stat_activity.pid)
                     FROM pg_stat_activity
-                    WHERE pg_stat_activity.datname = '{self.name}'
+                    WHERE pg_stat_activity.datname = '{db_name}'
                     AND pid <> pg_backend_pid();
                 """))
-                self.logger.info(f"Terminated connections for database '{self.name}'.")
-                connection.execute(text(f"DROP DATABASE IF EXISTS \"{self.name}\""))
-                self.logger.info(f"Database '{self.name}' dropped successfully.")
+                self.logger.info(f"Terminated connections for database '{db_name}'.")
+                connection.execute(text(f"DROP DATABASE IF EXISTS \"{db_name}\""))
+                self.logger.info(f"Database '{db_name}' dropped successfully.")
     
     async def _column_exists_async(self, table_schema: str, table_name: str, column_name: str) -> bool:
         """Check if the specified columns exist in the table asynchronously."""
@@ -666,11 +668,11 @@ class Database:
 
         try:
             if self.async_mode:
-                async_pages = run_async_method(paginator._async_paginated_query)
+                async_pages = run_async_method(paginator._paginated_query_async)
                 for page in async_pages:
                     yield page
             else:
-                for page in paginator._sync_paginated_query():
+                for page in paginator._paginated_query_sync():
                     yield page
         except Exception as e:
             self.logger.error(f"Pagination failed: {e}")

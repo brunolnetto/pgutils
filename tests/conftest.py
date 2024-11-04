@@ -10,9 +10,9 @@ from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, AsyncSession
 
-from pgutils.core import Database, Datasource, DataCluster
-from pgutils.models import DatabaseSettings, DatasourceSettings
-from pgutils.testing import prepare_database
+from pgbase.core import Database, Datasource, DataCluster
+from pgbase.models import DatabaseSettings, DatasourceSettings
+from pgbase.testing import prepare_database
 
 DEFAULT_PORT=5433
 

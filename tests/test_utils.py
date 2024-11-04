@@ -2,8 +2,8 @@ import pytest
 import asyncio
 from unittest.mock import patch
 
-from pgutils.core import Database
-from pgutils.utils import (
+from pgbase.core import Database
+from pgbase.utils import (
     validate_postgresql_uri, 
     run_async_method, 
     mask_sensitive_data,
