@@ -69,7 +69,8 @@ def run_async_method(async_method: Callable, *args, **kwargs) -> Any:
         return asyncio.run(async_method(*args, **kwargs))
 
 def mask_sensitive_data(uri: URL) -> str:
-    return str(uri._replace(password="******", username="******"))
+    replaced_uri=uri._replace(password="******", username="******")
+    return str(replaced_uri)
 
 def construct_uri(
     drivername: str, username: str, password: str, host: str, port: int, database: str
@@ -98,7 +99,7 @@ async def retry_async(
     action: Callable[[], asyncio.Future], 
     max_retries: int = 3, 
     timeout: Optional[int] = DEFAULT_RETRY_TIMEOUT_S, 
-    delay_factor: float = 2.0,  # Exponential backoff factor
+    delay_factor: float = 2.0,
     max_delay: Optional[int] = DEFAULT_RETRY_TIMEOUT_S,
     jitter: bool = True
 ) -> bool:

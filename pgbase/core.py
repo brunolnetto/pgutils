@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy.exc import ProgrammingError, OperationalError
 from ping3 import ping, errors
+import anyio
 
 from .models import (
     DatasourceSettings, DatabaseSettings, TableConstraint, Trigger, ColumnIndex, TablePaginator
@@ -29,6 +30,9 @@ from .constants import (
 )
 from .types import DatabaseConnection
 from .base import BaseDatabase
+
+class SyncDatabase(BaseDatabase):
+    pass
 
 class AsyncDatabase(BaseDatabase):
     """
@@ -64,6 +68,10 @@ class AsyncDatabase(BaseDatabase):
 
         if settings.name and settings.auto_create_db:
             self.create_database_if_not_exists(settings.name)
+
+    async def init(self):
+        await self.init_pool()
+        await self.create_database_if_not_exists(self.settings.name)                 
 
     def _create_engine(self):
         """Creates and returns the main async database engine."""
@@ -110,7 +118,7 @@ class AsyncDatabase(BaseDatabase):
         """
         try:
             # Create a connection pool for the database
-            self.pool = await asyncpg.create_pool(dsn=self.db_url, min_size=5, max_size=20)
+            self.pool = await asyncpg.create_pool(str(self.uri), min_size=5, max_size=self.settings.pool_size)
             self.logger.info("Database connection pool initialized.")
         except Exception as e:
             self.logger.error(f"Failed to initialize database pool: {e}")
@@ -401,9 +409,7 @@ class AsyncDatabase(BaseDatabase):
             raise
 
         query_str = """
-            SELECT schema_name 
-            FROM information_schema.schemata 
-            WHERE schema_name = :table_schema
+            SELECT schema_name FROM information_schema.schemata WHERE schema_name = :table_schema
         """
         result = await self.execute(query_str, {'table_schema': schema_name})
         return bool(result)
@@ -527,12 +533,12 @@ class AsyncDatabase(BaseDatabase):
     async def disconnect(self):
         """Cleans up and closes the database connections, synchronous or asynchronously."""
         await self.engine.dispose()
-    
+
     async def paginate(
         self, conn: DatabaseConnection, 
         query: str, params: Optional[Dict[str, Any]] = None, 
         batch_size: int = PAGINATION_BATCH_SIZE
-    ) -> AsyncGenerator[List[Any], None, None]:
+    ) -> AsyncGenerator:
         """Unified paginate interface for synchronous and asynchronous queries."""
         paginator = TablePaginator(conn, query, params=params, batch_size=batch_size)
         async for page in paginator._paginated_query_async():
@@ -622,7 +628,10 @@ class AsyncDatabase(BaseDatabase):
                 tc.table_name = :table_name AND 
                 tc.table_schema = :table_schema;
         """
-        params={'table_schema': schema_name, 'table_name': table_name}
+        params={
+            'table_schema': schema_name, 
+            'table_name': table_name
+        }
         result = await self.execute(sync_query, params)
         return [
             TableConstraint(
@@ -646,16 +655,20 @@ class AsyncDatabase(BaseDatabase):
             FROM information_schema.triggers 
             WHERE 
                 event_object_table = :table_name AND
-                    event_object_schema = :schema_name;
+                event_object_schema = :schema_name;
         """
-        columns = await self.list_columns('triggers', 'information_schema')  # Assuming list_columns method exists
+
+        # Assuming list_columns method exists
+        columns = await self.list_columns('triggers', 'information_schema')
         params={
             'schema_name': schema_name, 
             'table_name': table_name
         }
         result = await self.execute(sync_query, params)
         return [
-            Trigger(**dict(zip(columns, trigger_info))) for trigger_info in result
+            Trigger(
+                **dict(zip(columns, trigger_info))
+            ) for trigger_info in result
         ]
 
     # 8. List Functions
@@ -693,7 +706,10 @@ class AsyncDatabase(BaseDatabase):
             WHERE table_schema = :table_schema 
             AND table_name = :table_name;
         """
-        params={'table_schema': schema_name, 'table_name': table_name}
+        params={
+            'table_schema': schema_name, 
+            'table_name': table_name
+        }
         result = await self.execute(sync_query, params)
         return [column[0] for column in result]
 
@@ -737,9 +753,10 @@ class Datasource:
         self.description = settings.description
         self.settings = settings
 
+        # Initialize and validate database instances
         self.databases: Dict[str, AsyncDatabase] = {}
         for database_settings in settings.databases:
-            # Initialize and validate database instance
+            
             self.databases[database_settings.name] = AsyncDatabase(database_settings)
 
     async def _call_database_method(self, database_name: str, method_name: str, *args: Any):

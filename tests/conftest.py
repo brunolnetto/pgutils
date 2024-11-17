@@ -10,11 +10,11 @@ from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, AsyncSession
 
-from pgbase.core import Database, Datasource, DataCluster
+from pgbase.core import AsyncDatabase, Datasource, DataCluster
 from pgbase.models import DatabaseSettings, DatasourceSettings
 from pgbase.testing import prepare_database
 
-DEFAULT_PORT=5433
+DEFAULT_PORT=5432
 
 # Database configuration constants
 DB_NAME = "mydb"
@@ -69,21 +69,18 @@ def database_settings():
             "uri": f"postgresql+psycopg://postgres:postgres@localhost:{DEFAULT_PORT}/db",
             "admin_username": "postgres",
             "admin_password": "postgres",
-            "async_mode": False,
             "auto_create_db": True
         },
         "async": {
             "uri": f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}/db",
             "admin_username": "postgres",
             "admin_password": "postgres",
-            "async_mode": True,
             "auto_create_db": True
         },
         "invalid": {
             "uri": f"postgresql+asyncpg://postgres:postgres@anotherhost:{DEFAULT_PORT}/db",
             "admin_username": "postgres",
             "admin_password": "postgres",
-            "async_mode": True,
             "auto_create_db": True
         }
     }
@@ -100,7 +97,6 @@ def sync_settings_without_auto_create():
         "uri": f"postgresql://postgres:postgres@localhost:{DEFAULT_PORT}/db_test",
         "admin_username": "postgres",
         "admin_password": "postgres",
-        "async_mode": False,
         "auto_create_db": False
     })
 
@@ -110,19 +106,18 @@ def sync_settings_without_db_name():
         "uri": f"postgresql://postgres:postgres@localhost:{DEFAULT_PORT}",
         "admin_username": "postgres",
         "admin_password": "postgres",
-        "async_mode": False,
         "auto_create_db": False
     })
 
 @pytest.fixture(scope="function")
 def database_without_db_name(sync_settings_without_db_name):
-    db = Database(sync_settings_without_db_name)
+    db = AsyncDatabase(sync_settings_without_db_name)
     yield db
 
 
 @pytest.fixture(scope="function")
 def database_without_auto_create(sync_settings_without_auto_create):
-    db = Database(sync_settings_without_auto_create)
+    db = AsyncDatabase(sync_settings_without_auto_create)
     yield db
 
 @pytest.fixture(scope="function")
@@ -132,7 +127,7 @@ def sync_database(databases_settings):
 
 @pytest.fixture(scope="function")
 def async_database(databases_settings):
-    db = Database(databases_settings['async'])
+    db = AsyncDatabase(databases_settings['async'])
     yield db
 
 @pytest.fixture(scope="session")

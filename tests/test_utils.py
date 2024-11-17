@@ -2,7 +2,7 @@ import pytest
 import asyncio
 from unittest.mock import patch
 
-from pgbase.core import Database
+from pgbase.core import AsyncDatabase
 from pgbase.utils import (
     validate_postgresql_uri, 
     run_async_method, 
@@ -43,9 +43,9 @@ def test_valid_psycopg_uri(valid_psycopg_uri):
 
 # Test invalid prefixes
 @pytest.mark.parametrize("invalid_prefix_uri", [
-    "mysql://user:password@localhost:5432/dbname",  # Invalid scheme
-    "postgresql+invalid://user:password@localhost:5432/dbname",  # Invalid prefix
-    "http://user:password@localhost:5432/dbname"  # Completely invalid
+    "mysql://user:password@localhost:5432/dbname",                  # Invalid scheme
+    "postgresql+invalid://user:password@localhost:5432/dbname",     # Invalid prefix
+    "http://user:password@localhost:5432/dbname"                    # Completely invalid
 ])
 def test_invalid_prefix(invalid_prefix_uri):
     with pytest.raises(ValueError, match="Invalid URI scheme"):
@@ -60,9 +60,11 @@ def test_invalid_prefix(invalid_prefix_uri):
     "postgresql+psycopg://:password@localhost:5432/mydatabase",
 ])
 def test_invalid_asyncpg_uris_with_missing_components(invalid_async_uri):
-    with pytest.raises(ValueError, match='Both username and password must be provided together.'):
+    with pytest.raises(
+        ValueError, 
+        match='Both username and password must be provided together.'
+    ):
         validate_postgresql_uri(invalid_async_uri, allow_async=True)
-
 
 
 # Test invalid URIs with missing components and allow_async=True
@@ -103,6 +105,7 @@ def test_run_async_method_with_non_callable():
     with pytest.raises(ValueError) as exc:
         run_async_method('not_callable', 5)
 
+
 @pytest.mark.asyncio
 async def test_run_async_method_with_running_event_loop():
     """Test running an async method with an existing running event loop."""
@@ -114,6 +117,7 @@ async def test_run_async_method_with_running_event_loop():
     task = run_async_method(sample_async_method, 5)
     result = await task
     assert result == 10
+
 
 @pytest.mark.asyncio
 async def test_run_async_method_with_non_async_function():
@@ -128,6 +132,7 @@ async def test_run_async_method_with_non_async_function():
     
     assert result == 10
 
+
 @pytest.mark.asyncio
 async def test_run_async_method_with_exception():
     """Test running an async method that raises an exception."""
@@ -137,6 +142,7 @@ async def test_run_async_method_with_exception():
     with pytest.raises(ValueError, match="An error occurred"):
         task = run_async_method(sample_async_method)
         await task
+
 
 @pytest.mark.asyncio
 async def test_run_async_method_with_kwargs():
@@ -151,6 +157,7 @@ async def test_run_async_method_with_kwargs():
 
     assert result == 10
 
+
 def test_run_async_method_no_event_loop():
     """Test that a new event loop is created when there is no current loop."""
     async def sample_async_method():
@@ -160,6 +167,7 @@ def test_run_async_method_no_event_loop():
         result = run_async_method(sample_async_method)
         assert result == 42  # Check if the result is as expected
 
+
 @pytest.mark.asyncio
 async def test_run_async_method_running_loop():
     async def sample_async_method(x):
@@ -168,6 +176,7 @@ async def test_run_async_method_running_loop():
     result = await run_async_method(sample_async_method, 5)
     assert result == 10
 
+
 def test_run_async_method_no_loop():
     async def sample_async_method(x):
         return x * 2
@@ -175,28 +184,39 @@ def test_run_async_method_no_loop():
     result = run_async_method(sample_async_method, 5)
     assert result == 10
 
+
 def test_missing_username():
     # Case 1: Missing username but password is provided
     uri = "postgresql://:password@localhost/dbname"
-    with pytest.raises(ValueError, match="Both username and password must be provided together, or neither."):
+    with pytest.raises(
+        ValueError, 
+        match="Both username and password must be provided together, or neither."
+    ):
         validate_postgresql_uri(uri)
+
 
 def test_missing_password():
     # Case 2: Missing password but username is provided
     uri = "postgresql://username:@localhost/dbname"
-    with pytest.raises(ValueError, match="Both username and password must be provided together, or neither."):
+    with pytest.raises(
+        ValueError, 
+        match="Both username and password must be provided together, or neither."
+    ):
         validate_postgresql_uri(uri)
+
 
 def test_valid_username_and_password():
     # Case 3: Both username and password are provided correctly
     uri = "postgresql://username:password@localhost/dbname"
     assert validate_postgresql_uri(uri) == uri
 
+
 def test_no_username_or_password():
     # Case 4: Neither username nor password is provided
     uri = "postgresql://localhost/dbname"
     assert validate_postgresql_uri(uri) == uri
 
-def test_mask_sensitive_data(sync_database: Database):
+
+def test_mask_sensitive_data(sync_database: AsyncDatabase):
     masked_uri = mask_sensitive_data(sync_database.uri)
     assert "***" in masked_uri, "Sensitive data should be masked."

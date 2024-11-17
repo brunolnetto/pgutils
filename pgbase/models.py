@@ -1,7 +1,4 @@
-from typing import (
-    Dict, List, Any, 
-    Optional
-)
+from typing import Dict, List, Any, Optional, Generator, AsyncGenerator, Union
 from typing_extensions import Self
 from pydantic import BaseModel
 import warnings
@@ -13,17 +10,11 @@ from pydantic import (
     model_validator, 
     Field 
 )
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
-from sqlalchemy.engine import Result
-from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.engine import Result, Connection
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
+from sqlalchemy.orm import Session
 
-from .types import (
-    SyncPageGenerator, 
-    AsyncPageGenerator, 
-    PageGenerator, 
-    DatabaseConnection
-)
 from .utils import (
     validate_postgresql_uri, 
     construct_admin_uri,
@@ -41,9 +32,23 @@ from .constants import (
     VALID_SCHEMES,
     VALID_INDEX_TYPES,
 )
-from .exceptions import QueryValidationError, ExcessiveSelectWarning
 
+# Types
+AsyncPageGenerator = AsyncGenerator[List[Any], None] 
+SyncPageGenerator = Generator[List[Any], None, None]
+PageGenerator = Union[AsyncPageGenerator, SyncPageGenerator]
 AsyncDatabaseInteraction=(AsyncConnection, AsyncSession)
+DatabaseConnection = Union[Session, AsyncSession, Connection, AsyncConnection]
+
+# Models
+class QueryValidationError(Exception):
+    """Exception for invalid queries."""
+    pass
+
+class ExcessiveSelectWarning(Warning):
+    """Warning raised for the use of SELECT * in SQL queries."""
+    pass
+
 class DatabaseSettings(BaseModel):
     uri: AnyUrl
     admin_username: str = Field(
@@ -55,7 +60,6 @@ class DatabaseSettings(BaseModel):
         min_length=DEFAULT_MINIMUM_PASSWORD_SIZE
     )
     default_port: int = 5432
-    async_mode: bool = False
     pool_size: int = Field(default=DEFAULT_POOL_SIZE, gt=0)
     max_overflow: int = Field(default=DEFAULT_MAX_OVERFLOW, ge=0)
     auto_create_db: bool = Field(default=False)
@@ -79,7 +83,6 @@ class DatabaseSettings(BaseModel):
             self.uri, self.uri.username, self.uri.password, self.default_port
         )
 
-
     @field_validator('uri')
     def validate_uri(cls, uri: AnyUrl) -> Any:
         """Validates the URI format."""
@@ -93,8 +96,12 @@ class DatabaseSettings(BaseModel):
 class DatasourceSettings(BaseModel):
     """Configuration settings for a DataSource."""
     name: str
-    admin_username: str = Field(default=DEFAULT_ADMIN_USERNAME, min_length=NOT_EMPTY_STR_COUNT)
-    admin_password: str = Field(default=DEFAULT_ADMIN_PASSWORD,  min_length=DEFAULT_MINIMUM_PASSWORD_SIZE)
+    admin_username: str = Field(
+        default=DEFAULT_ADMIN_USERNAME, min_length=NOT_EMPTY_STR_COUNT
+    )
+    admin_password: str = Field(
+        default=DEFAULT_ADMIN_PASSWORD,  min_length=DEFAULT_MINIMUM_PASSWORD_SIZE
+    )
     databases: List[DatabaseSettings]                   # List of databases in the data source
     description: Optional[str] = None                   # Optional field for a description of the data source
     connection_timeout: int = Field(default=30, ge=0)   # Timeout for connections in seconds
@@ -156,6 +163,7 @@ class TableConstraint(BaseModel):
     foreign_table_name: Optional[str]
     foreign_column_name: Optional[str]
 
+
 class Trigger(BaseModel):
     trigger_catalog: str = Field(..., 
         description="The catalog (database) where the trigger exists")
@@ -191,6 +199,7 @@ class Trigger(BaseModel):
         description="Used to reference the new row")
     created: Optional[str] = Field(None, 
         description="The timestamp when the trigger was created")
+
 
 class QueryValidator:
     """Utility class to validate queries used for pagination."""

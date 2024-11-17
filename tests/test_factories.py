@@ -23,6 +23,7 @@ def test_database_settings_factory():
     assert db_settings.max_overflow == 5
     assert db_settings.auto_create_db is False
 
+
 def test_datasource_settings_factory():
     """Test the DatasourceSettingsFactory produces valid DatasourceSettings."""
     ds_settings = DatasourceSettingsFactory(name="TestDatasource")
@@ -46,11 +47,13 @@ def test_datasource_settings_factory():
         assert db.max_overflow == 5
         assert db.auto_create_db is False
 
+
 def test_database_settings_factory_validation():
     """Test that DatabaseSettings raises validation error with invalid inputs."""
     with pytest.raises(ValidationError):
         # Attempt to create DatabaseSettings with an invalid uri
         invalid_db_settings = DatabaseSettingsFactory(uri="invalid_uri")
+
 
 def test_mocked_data_cluster():
     """Test that the mocked DataCluster behaves as expected."""

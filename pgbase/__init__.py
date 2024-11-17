@@ -1,7 +1,7 @@
 from .core import (
     DatabaseSettings, 
     DatasourceSettings, 
-    Database, 
+    AsyncDatabase, 
     Datasource, 
     DataCluster
 )  
@@ -9,7 +9,7 @@ from .core import (
 __all__ = [
     'DatabaseSettings',
     'DatasourceSettings',
-    'Database',
+    'AsyncDatabase',
     'Datasource',
     'DataCluster'
 ]
