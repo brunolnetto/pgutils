@@ -34,7 +34,7 @@ BROWSER := python -c "$$BROWSER_PYSCRIPT"
 DO_DOCS_HTML := $(MAKE) -C clean-docs && $(MAKE) -C docs html
 SPHINXBUILD   = python3 -msphinx
 
-PACKAGE_NAME = "pgutils"
+PACKAGE_NAME = "pgbase"
 PACKAGE_VERSION := poetry version -s
 
 help:

@@ -566,13 +566,19 @@ class AsyncDatabase(BaseDatabase):
         return [schema[0] for schema in result]
 
     # 3. List Indexes
-    async def list_indexes(self, table_name: str):
+    async def list_indexes(self,  table_name: str, schema_name: str = 'public'):
         """List all indexes for a given table."""
         sync_query = """
             SELECT indexname FROM pg_indexes 
-            WHERE tablename = :table_name;
+            WHERE 
+                schemaname = :schema_name and
+                tablename = :table_name;
         """
-        result = await self.execute(sync_query, {'table_name': table_name})
+        params={
+            'table_name': table_name,
+            'schema_name': schema_name
+        }
+        result = await self.execute(sync_query, )
         return [index[0] for index in result]
 
     # 4. List Views
@@ -612,10 +618,12 @@ class AsyncDatabase(BaseDatabase):
             LEFT JOIN information_schema.constraint_column_usage AS ccu
                 ON tc.constraint_name = ccu.constraint_name
                 AND tc.table_schema = ccu.table_schema
-            WHERE tc.table_name = :table_name
-                AND tc.table_schema = :table_schema;
+            WHERE 
+                tc.table_name = :table_name AND 
+                tc.table_schema = :table_schema;
         """
-        result = await self.execute(sync_query, {'table_schema': schema_name, 'table_name': table_name})
+        params={'table_schema': schema_name, 'table_name': table_name}
+        result = await self.execute(sync_query, params)
         return [
             TableConstraint(
                 constraint_name=constraint_name,
@@ -625,22 +633,29 @@ class AsyncDatabase(BaseDatabase):
                 foreign_table_name=foreign_table_name,
                 foreign_column_name=foreign_column_name
             ) 
-            for constraint_name, constraint_type, table_name, column_name, foreign_table_name, foreign_column_name in result
+            for constraint_name, constraint_type, 
+            table_name, column_name, 
+            foreign_table_name, foreign_column_name in result
         ]
 
     # 7. List Triggers
-    async def list_triggers(self, table_name: str):
+    async def list_triggers(self, table_name: str, schema_name: str = 'public'):
         """List all triggers for a specified table."""
         sync_query = """
             SELECT * 
             FROM information_schema.triggers 
-            WHERE event_object_table = :table_name;
+            WHERE 
+                event_object_table = :table_name AND
+                    event_object_schema = :schema_name;
         """
         columns = await self.list_columns('triggers', 'information_schema')  # Assuming list_columns method exists
-        result = await self.execute(sync_query, {'table_name': table_name})
+        params={
+            'schema_name': schema_name, 
+            'table_name': table_name
+        }
+        result = await self.execute(sync_query, params)
         return [
-            Trigger(**dict(zip(columns, trigger_info)))
-            for trigger_info in result
+            Trigger(**dict(zip(columns, trigger_info))) for trigger_info in result
         ]
 
     # 8. List Functions
@@ -749,15 +764,11 @@ class Datasource:
 
     async def list_indexes(self, database_name: str, table_name: str):
         """List indexes for a table in a specified database."""
-        return await self._call_database_method(
-            database_name, "list_indexes", table_name
-        )
+        return await self._call_database_method(database_name, "list_indexes", table_name)
 
     async def list_views(self, database_name: str, table_schema: str):
         """List views from a specified database."""
-        return await self._call_database_method(
-            database_name, "list_views", table_schema
-        )
+        return await self._call_database_method(database_name, "list_views", table_schema)
 
     async def list_sequences(self, database_name: str):
         """List sequences from a specified database."""
@@ -777,15 +788,11 @@ class Datasource:
 
     async def list_functions(self, database_name: str):
         """List functions from a specified database."""
-        return await self._call_database_method(
-            database_name, "list_functions"
-        )
+        return await self._call_database_method(database_name, "list_functions")
 
     async def list_procedures(self, database_name: str):
         """List procedures from a specified database."""
-        return await self._call_database_method(
-            database_name, "list_procedures"
-        )
+        return await self._call_database_method(database_name, "list_procedures")
 
     async def list_materialized_views(self, database_name: str):
         """List materialized views from a specified database."""
@@ -863,7 +870,6 @@ class Datasource:
         # Convert the list of results into a dictionary
         return dict(results)
 
-
     async def health_check_all(self) -> Dict[str, bool]:
         """Performs health checks on all databases."""
         return await self._call_database_method_all('health_check')
@@ -896,7 +902,9 @@ class DataCluster:
         datasources (Dict[str, Datasource]): Dictionary of initialized datasource instances.
     """
 
-    def __init__(self, settings_dict: Dict[str, DatasourceSettings], logger: Optional[Logger] = None):
+    def __init__(
+        self, settings_dict: Dict[str, DatasourceSettings], logger: Optional[Logger] = None
+    ):
         self.logger = logger or getLogger(self.__class__.__name__)
 
         self.datasources: Dict[str, Datasource] = {}
@@ -913,7 +921,9 @@ class DataCluster:
 
         return self.datasources[name]
 
-    async def _call_datasource_method_all(self, method_name: str, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+    async def _call_datasource_method_all(
+        self, method_name: str, *args: Any, **kwargs: Any
+    ) -> Dict[str, Any]:
         """
         Calls a method on all datasources and collects the results.
 

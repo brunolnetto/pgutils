@@ -92,7 +92,7 @@ jobs:
     # Run tests and generate coverage report
     - name: Run Tests with Coverage
       run: |
-        poetry run pytest --cov=pgutils tests/
+        poetry run pytest --cov=pgbase tests/
         # Save coverage report to a specific file
         mkdir -p coverage-reports
         mv .coverage coverage-reports/coverage.xml
