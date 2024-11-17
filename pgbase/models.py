@@ -15,7 +15,6 @@ from pydantic import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
-from sqlalchemy.engine.url import make_url
 from sqlalchemy.engine import Result
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -27,7 +26,6 @@ from .types import (
 )
 from .utils import (
     validate_postgresql_uri, 
-    construct_uri, 
     construct_admin_uri,
     construct_complete_uri, 
     run_async_method
