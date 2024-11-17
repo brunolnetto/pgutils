@@ -45,9 +45,11 @@ class QueryValidationError(Exception):
     """Exception for invalid queries."""
     pass
 
+
 class ExcessiveSelectWarning(Warning):
     """Warning raised for the use of SELECT * in SQL queries."""
     pass
+
 
 class DatabaseSettings(BaseModel):
     uri: AnyUrl
@@ -93,6 +95,7 @@ class DatabaseSettings(BaseModel):
 
         return uri
 
+
 class DatasourceSettings(BaseModel):
     """Configuration settings for a DataSource."""
     name: str
@@ -118,6 +121,7 @@ class DatasourceSettings(BaseModel):
 
     def __repr__(self):
         return f"<DataSourceSettings(name={self.name}, databases={len(self.databases)})>"
+
 
 class ColumnIndex(BaseModel):
     schema_name: str = 'public'

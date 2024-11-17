@@ -4,10 +4,9 @@ from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from pgbase.exceptions import QueryValidationError, ExcessiveSelectWarning
 from pgbase.models import DatabaseSettings, ColumnIndex, TablePaginator, QueryValidator
 from pgbase.constants import DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD
-from pgbase.testing import populate_database
+from tests.testing import populate_database
 from .conftest import SYNC_DB_URL, DB_NAME
 
 

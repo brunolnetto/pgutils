@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, AsyncSessi
 
 from pgbase.core import AsyncDatabase, Datasource, DataCluster
 from pgbase.models import DatabaseSettings, DatasourceSettings
-from pgbase.testing import prepare_database
+from tests.testing import prepare_database
 
 DEFAULT_PORT=5432
 

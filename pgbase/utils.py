@@ -8,6 +8,7 @@ from sqlalchemy.engine.url import make_url, URL
 
 from .constants import VALID_SCHEMES, VALID_SYNC_SCHEMES, DEFAULT_RETRY_TIMEOUT_S
 
+
 def validate_postgresql_uri(uri: str, allow_async: bool = False):
     """Validates if a URI is a valid PostgreSQL URI using SQLAlchemy's make_url."""
     
@@ -40,13 +41,16 @@ def validate_postgresql_uri(uri: str, allow_async: bool = False):
     # Return valid URI if all checks pass
     return uri
 
+
 def is_valid_schema_name(schema_name: str) -> bool:
     # Schema names should only contain alphanumeric characters or underscores and must not start with a digit.
     return bool(re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', schema_name))
 
+
 def validate_schema_name(schema_name: str):
     if not is_valid_schema_name(schema_name):
         raise ValueError(f"Invalid schema name: {schema_name}")
+
 
 def run_async_method(async_method: Callable, *args, **kwargs) -> Any:
     """Run an arbitrary asynchronous method in an agnostic way."""
@@ -68,9 +72,11 @@ def run_async_method(async_method: Callable, *args, **kwargs) -> Any:
         # If there's no event loop, we can create a new one and run the async method
         return asyncio.run(async_method(*args, **kwargs))
 
+
 def mask_sensitive_data(uri: URL) -> str:
     replaced_uri=uri._replace(password="******", username="******")
     return str(replaced_uri)
+
 
 def construct_uri(
     drivername: str, username: str, password: str, host: str, port: int, database: str
@@ -78,6 +84,7 @@ def construct_uri(
     """Constructs a PostgreSQL URI from the provided components, excluding slash if the database is empty."""
     database_part = f"/{database}" if database else ""
     return make_url(f"{drivername}://{username}:{password}@{host}:{port}{database_part}")
+
 
 def construct_complete_uri(uri: AnyUrl, username: str, password: str, default_port: int) -> AnyUrl:
     """Constructs the complete URI for a database connection."""
@@ -91,9 +98,11 @@ def construct_complete_uri(uri: AnyUrl, username: str, password: str, default_po
         parsed_uri.database or ''
     )
 
+
 def construct_admin_uri(uri: AnyUrl, username: str, password: str) -> AnyUrl:
     """Constructs an admin URI from the given details."""
     return construct_uri('postgresql+psycopg2', username, password, uri.host, uri.port, '')
+
 
 async def retry_async(
     action: Callable[[], asyncio.Future], 

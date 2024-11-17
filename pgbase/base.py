@@ -7,9 +7,7 @@ from sqlalchemy.engine.url import make_url
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.sql.schema import MetaData
 
-from .models import (
-    DatabaseSettings, TableConstraint, ColumnIndex
-)
+from .models import DatabaseSettings, TableConstraint, ColumnIndex
 from .constants import DEFAULT_HEALTHCHECK_TIMEOUT_S    
 from .utils import mask_sensitive_data
 

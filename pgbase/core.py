@@ -23,12 +23,7 @@ from .models import (
 from .utils import (
     mask_sensitive_data, validate_schema_name, retry_async
 )
-from .constants import (
-    PAGINATION_BATCH_SIZE, 
-    DEFAULT_HEALTHCHECK_TIMEOUT_S, 
-    MAX_RETRIES,
-)
-from .types import DatabaseConnection
+from .constants import PAGINATION_BATCH_SIZE, DEFAULT_HEALTHCHECK_TIMEOUT_S, MAX_RETRIES
 from .base import BaseDatabase
 
 class SyncDatabase(BaseDatabase):
