@@ -1,6 +1,8 @@
-.PHONY: help clean test coverage docs servedocs install bump publish release
+.SILENT:
+.PHONY: help clean test coverage install bump publish release
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
+
 
 define BROWSER_PYSCRIPT
 import os, webbrowser, sys
@@ -35,7 +37,6 @@ DO_DOCS_HTML := $(MAKE) -C clean-docs && $(MAKE) -C docs html
 SPHINXBUILD   = python3 -msphinx
 
 PACKAGE_NAME = "pgbase"
-PACKAGE_VERSION := poetry version -s
 
 
 help:
@@ -111,7 +112,7 @@ install: clean ## Installs the python requirements. Usage: make install
 
 
 what: ## List all commits made since last version bump
-	git log --oneline "$$(git rev-list -n 1 "v$$(poetry version -s)")..$$(git rev-parse HEAD)"
+	git log --oneline "$$(git rev-list -n 1 "v$$(make --silent version)")..$$(git rev-parse HEAD)"
 
 
 check-bump: # check if bump version is valid
@@ -124,9 +125,13 @@ check-bump: # check if bump version is valid
 		exit 1; \
 	fi; \
 
+version:
+	@echo $$(grep '^version =' pyproject.toml | awk '{print $$3}' | tr -d '"')
+
 
 echo: ## echo current package version
-	echo "v$$(grep '^version =' pyproject.toml | awk '{print $$3}' | tr -d '"')"
+	@PACKAGE_VERSION=$$(make --silent version); \
+	echo "Current package version: $$PACKAGE_VERSION"
 
 
 apply-bump: ## apply version bump
@@ -192,7 +197,7 @@ bump: ## Bump version to user-provided {patch|minor|major} semantic version
 	git tag "v$$NEW_VERSION"; \
 	git push; \
 	git push --tags
-	poetry version
+	echo "Version bumped to $$NEW_VERSION"
 
 
 publish: clean ## build source and publish package
