@@ -66,7 +66,7 @@ def populate_database(uri: str, db_name: str):
                 """
             )
         )
-        tables = [row[0] for row in result]
+        [row[0] for row in result]
 
         # Clear existing data
         conn.execute(text("DELETE FROM test_table;"))

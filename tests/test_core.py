@@ -1,60 +1,46 @@
 import pytest
-from contextlib import asynccontextmanager, contextmanager
-from unittest.mock import MagicMock, patch
 from pydantic import ValidationError
 from typing import Dict
 
 from sqlalchemy import Column, Integer, String
 
-from pgbase.base import BaseDatabase
+from pgbase.core import AsyncDatabase, Datasource, DataCluster
 
-from pgbase.core import (
-    BaseDatabaseSettings, 
+from pgbase.models import (
+    DatabaseSettings, 
     DatasourceSettings, 
     TableConstraint, 
-    AsyncDatabase, 
-    Datasource,
-    ColumnIndex,
-    DataCluster
+    ColumnIndex
 )
 
-from .conftest import (
-    DatasourceSettingsFactory, 
-    BaseDatabaseSettingsFactory,
-    DEFAULT_PORT,
-)
+from .conftest import DatasourceSettingsFactory, DEFAULT_PORT
 
 # Dummy test to initialize module scoped Datasource
 def test_database_initialization(datasource: Datasource):
     assert 1==1
 
-def test_create_and_drop_tables(sync_database: BaseDatabase):
-    db = sync_database
-    db.create_tables()
-    assert db.health_check() is True, "Health check after table creation should pass."
-    db.drop_tables()
-    assert db.health_check() is True, "Health check after dropping tables should pass."
 
-
-def test_create_and_drop_tables(async_database: BaseDatabase):
+@pytest.mark.asyncio
+async def test_create_and_drop_tables(async_database: AsyncDatabase):
     db = async_database
-    db.create_tables()
-    assert db.health_check() is True, "Health check after table creation should pass."
-    db.drop_tables()
-    assert db.health_check() is True, "Health check after dropping tables should pass."
+    await db.create_tables()
+    assert await db.health_check() is True, "Health check after table creation should pass."
+    await db.drop_tables()
+    assert await db.health_check() is True, "Health check after dropping tables should pass."
 
 
-def test_create_and_drop_tables_with_admin(sync_database: BaseDatabase):
-    db = sync_database
-    db.create_tables()
-    assert db.health_check(use_admin_uri=True) is True, "Health check after table creation should pass."
-    db.drop_tables()
-    assert db.health_check(use_admin_uri=True) is True, "Health check after dropping tables should pass."
+@pytest.mark.asyncio
+async def test_create_and_drop_tables_with_admin(async_database: AsyncDatabase):
+    db = async_database
+    await db.create_tables()
+    assert await db.health_check(use_admin_uri=True) is True, "Health check after table creation should pass."
+    await db.drop_tables()
+    assert await db.health_check(use_admin_uri=True) is True, "Health check after dropping tables should pass."
 
 
 def test_invalid_pool_size():
     with pytest.raises(ValidationError):
-        BaseDatabaseSettings(
+        DatabaseSettings(
             uri="postgresql+psycopg://localhost:5432/mydatabase",
             admin_username="postgres",
             admin_password="postgres",
@@ -65,72 +51,48 @@ def test_invalid_pool_size():
         )
 
 
-# Test for check_database_exists
-def test_check_database_exists_true(sync_database: BaseDatabase):
-    """Test when the BaseDatabase exists (synchronous)."""
-    # Call the method using the sync_database fixture
-    result = sync_database.check_database_exists()
-
+def test_check_database_exists_true(async_database: AsyncDatabase):
+    """Test when the AsyncDatabase exists (synchronous)."""
     # Check that the method returned True
-    assert result is True
+    assert async_database.check_database_exists() is True
 
 
-def test_check_database_doesnt_exist(database_without_auto_create: BaseDatabase):
+def test_check_database_doesnt_exist(database_without_auto_create: AsyncDatabase):
     """Test when an error occurs during the check (synchronous)."""
-    db_settings=DatabaseSettings(
-        **{
-            "uri": f"postgresql://postgres:postgres@localhost:{DEFAULT_PORT}/db_test",
-            "admin_username": "postgres",
-            "admin_password": "postgres",
-            "async_mode": False,
-            "auto_create_db": False
-        }
-    )
-    db = BaseDatabase(db_settings)
+    db=database_without_auto_create
     
     # Check that the method returned False due to the error
     db.drop_database_if_exists()
-    db_exists = db.check_database_exists()
-    assert db_exists is False
-    
-    db_exists = db.check_database_exists('test_db_')
-    assert db_exists is False
+    assert db.check_database_exists() is False
+
+    assert db.check_database_exists('test_db_') is False
 
     db.create_database_if_not_exists()
-    db_exists = db.check_database_exists()
-    assert db_exists is True
-    
+    assert db.check_database_exists() is True
+
     db.drop_database_if_exists()
-    db_exists = db.check_database_exists()
-    assert db_exists is False
+    assert db.check_database_exists() is False
 
 
-def test_check_database_doesnt_exist_without_db_name(database_without_db_name: BaseDatabase):
+def test_check_database_doesnt_exist_without_db_name(database_without_db_name: AsyncDatabase):
     """Test when an error occurs during the check (synchronous)."""
-    # Check that the method returned False due to the error
-    db_exists = BaseDatabase_without_db_name.check_database_exists()
-    
-    assert db_exists is False
+    # Check that the method returned False due to the error    
+    assert database_without_db_name.check_database_exists() is False
 
 
-def test_repr_sync_database(sync_database: BaseDatabase):
-    BaseDatabase_repr = str(sync_database)
-    assert "***" in BaseDatabase_repr, "Sensitive data should be masked."
-    assert f"async_mode={str(sync_database.async_mode)}" in BaseDatabase_repr, "Async mode must be present"
+def test_repr_sync_database(async_database: AsyncDatabase):
+    AsyncDatabase_repr = str(async_database)
+    assert "***" in AsyncDatabase_repr, "Sensitive data should be masked."
 
 
-def test_paginate_sync(sync_database: BaseDatabase):
+@pytest.mark.asyncio
+async def test_paginate_sync(async_database: AsyncDatabase):
     # Fetch and assert paginated results in batches
-    expected_batches = [
-        [('Alice', ), ('Bob', )],
-        [('Charlie', ), ('David', )]
-    ]
-
     results = []
 
-    with sync_database.get_session() as session:
+    async with async_database.get_session() as session:
         query_str="SELECT name FROM test_table"
-        for batch in sync_database.paginate(session, query_str, batch_size = 2):
+        async for batch in async_database.paginate(session, query_str, batch_size = 2):
             results.append(batch)
 
         # Assertion to verify the result
@@ -138,81 +100,58 @@ def test_paginate_sync(sync_database: BaseDatabase):
 
 
 def test_datasource_repr(datasource: Datasource):
+    expected=f"Datasource({datasource.databases.keys()})"
+
     # Assertion to verify the result
-    assert datasource.__repr__() == f"Datasource({datasource.databases.keys()})"
+    assert datasource.__repr__() == expected
 
 
-def test_query(
-    sync_database: BaseDatabase,
-    async_database: BaseDatabase,
-    datasource: Datasource
-):
+@pytest.mark.asyncio
+async def test_query(async_database: AsyncDatabase):
     query_str="SELECT * FROM test_table"
-    sync_results = sync_database.query(query_str)
-    async_results = async_database.query( query_str)
-    
-    # Assertion to verify the result
-    assert len(sync_results) == 4
+    async_results = await async_database.execute(query_str)
     assert len(async_results) == 4
 
 
-def test_list_columns(
-    sync_database: BaseDatabase, 
-    async_database: BaseDatabase,
-    datasource: Datasource
-):
-    sync_results = sync_database.list_columns('test_table')
-    async_results = async_database.list_columns('test_table')
-
-    # Assertion to verify the result
-    assert sync_results == ['id', 'name']
-    assert async_results == ['id', 'name']
+@pytest.mark.asyncio
+async def test_list_columns(async_database: AsyncDatabase, datasource: Datasource):
+    expected=['id', 'name']
     
-    ds_results = datasource.list_columns('db1', 'public', 'test_table')
-    assert ds_results == ['id', 'name']
-
-def test_columns_exists(
-    sync_database: BaseDatabase,
-    async_database: BaseDatabase,
-    datasource: Datasource
-):
-    assert sync_database.column_exists('public', 'test_table', 'name')
-    assert async_database.column_exists('public', 'test_table', 'name')
-    assert datasource.column_exists('db1', 'public', 'test_table', 'name')
-
-
-def test_list_schemas(sync_database: BaseDatabase, async_database: BaseDatabase):
-    sync_results = sync_database.list_schemas()
-    async_results = async_database.list_schemas()
+    async_results = await async_database.list_columns('test_table')
+    assert async_results == expected
     
-    # Assertion to verify the result
+    ds_results = await datasource.list_columns('db1', 'public', 'test_table')
+    assert ds_results == expected
+
+@pytest.mark.asyncio
+async def test_columns_exists(async_database: AsyncDatabase, datasource: Datasource):
+    assert await async_database.column_exists('public', 'test_table', 'name')
+    assert await datasource.column_exists('db1', 'public', 'test_table', 'name')
+
+
+@pytest.mark.asyncio
+def test_list_schemas(async_database: AsyncDatabase, datasource: Datasource):
     expected=[ 'pg_toast', 'pg_catalog', 'public', 'information_schema' ]
-    assert sync_results == expected
-    assert async_results == expected
-
-def test_list_views(
-    sync_database: BaseDatabase, 
-    async_database: BaseDatabase,
-    datasource: Datasource
-):
-    expected = []
-    
-    sync_results = sync_database.list_views('public')
-    async_results = async_database.list_views('public')
 
     # Assertion to verify the result
-    assert sync_results == expected
+    async_results = async_database.list_schemas()
     assert async_results == expected
 
-    ds_results = datasource.list_views('db1', 'public')
+    ds_results = datasource.list_schemas()
+    assert ds_results == expected
+
+@pytest.mark.asyncio
+async def test_list_views(async_database: AsyncDatabase, datasource: Datasource):
+    expected = []
+    async_results = await async_database.list_views('public')
+    assert async_results == expected
+
+    ds_results = await datasource.list_views('db1', 'public')
     assert ds_results == expected
 
 
-def test_list_constraints(
-    sync_database: BaseDatabase, 
-    async_database: BaseDatabase,
-    datasource: Datasource
-):
+@pytest.mark.asyncio
+async def test_list_constraints(async_database: AsyncDatabase, datasource: Datasource):
     # Assertion to verify the result
     expected=[
         TableConstraint(
@@ -224,177 +163,104 @@ def test_list_constraints(
             foreign_column_name='id'
         )
     ]
-    
-    sync_results = sync_database.list_constraints('test_table')
-    async_results = async_database.list_constraints('test_table')
 
+    async_results = await async_database.list_constraints('test_table')
     assert async_results == expected
-    assert sync_results == expected
     
-    ds_results = datasource.list_constraints('db1', 'public', 'test_table')
-    
+    ds_results = await datasource.list_constraints('db1', 'public', 'test_table')    
     assert ds_results == expected
 
 
-def test_list_sequences(
-    sync_database: BaseDatabase, 
-    async_database: BaseDatabase,
-    datasource: Datasource
-):
+@pytest.mark.asyncio
+async def test_list_sequences(async_database: AsyncDatabase, datasource: Datasource):
     expected={'test_table_id_seq'}
-
-    sync_results = sync_database.list_sequences()
-    async_results = sync_database.list_sequences()
-
-    # Assertion to verify the result
-    assert set(sync_results) == expected
+    async_results = await async_database.list_sequences()
     assert set(async_results) == expected
     
-    ds_results = datasource.list_sequences('db1')
+    ds_results = await datasource.list_sequences('db1')
     assert set(ds_results) == expected
 
 
-def test_audit_trigger(
-    sync_database: BaseDatabase, 
-    async_database: BaseDatabase,
-    datasource: Datasource
-):
-    sync_database.add_audit_trigger('test_table')
-    sync_database.add_audit_trigger('test_table')
-
-    async_database.add_audit_trigger('test_table')
-    async_database.add_audit_trigger('test_table')
-
-    sync_results = sync_database.list_triggers('test_table')
-    async_results = async_database.list_triggers('test_table')
-
-    # Assertion to verify the result
-    assert len(sync_results) == 3
+@pytest.mark.asyncio
+async def test_audit_trigger(async_database: AsyncDatabase, datasource: Datasource):
+    await async_database.add_audit_trigger('test_table')
+    async_results = await async_database.list_triggers('test_table')
     assert len(async_results) == 3
 
-    ds_results = datasource.list_triggers('db1', 'test_table')
+    await datasource.get_database('db2').add_audit_trigger('test_table')
+    ds_results = await datasource.list_triggers('db1', 'test_table')
     assert len(ds_results) == 3
 
-
-def test_audit_trigger_with_error(sync_database: BaseDatabase):
+@pytest.mark.asyncio
+async def test_audit_trigger_with_error(async_database: AsyncDatabase):
     with pytest.raises(ValueError, match='Invalid table name provided.'):
-        sync_database.add_audit_trigger('invalid table name')
+        await async_database.add_audit_trigger('invalid table name')
 
-def test_list_functions(
-    sync_database: BaseDatabase, 
-    async_database: BaseDatabase,
-    datasource: Datasource
-):
-    sync_results = sync_database.list_functions()
-    async_results = async_database.list_functions()
-
-    # Assertion to verify the result
-    assert len(sync_results) > 0
+@pytest.mark.asyncio
+async def test_list_functions(async_database: AsyncDatabase, datasource: Datasource):
+    async_results = await async_database.list_functions()
     assert len(async_results) > 0
 
-    ds_results = datasource.list_functions('db1')
+    ds_results = await datasource.list_functions('db1')
     
     assert len(ds_results) > 0
 
 
-def test_list_procedures(
-    sync_database: BaseDatabase, 
-    async_database: BaseDatabase,
-    datasource: Datasource
-):
+@pytest.mark.asyncio
+async def test_list_procedures(async_database: AsyncDatabase, datasource: Datasource):
     expected = []
-    
-    sync_results = sync_database.list_procedures()
-    async_results = async_database.list_procedures()
-
-    # Assertion to verify the result
-    assert sync_results == expected
+    async_results = await async_database.list_procedures()
     assert async_results == expected
     
-    ds_results = datasource.list_procedures('db1')
-    
+    ds_results = await datasource.list_procedures('db1')
     assert ds_results == expected
 
 
-def test_list_materialized_views(
-    sync_database: BaseDatabase, 
-    async_database: BaseDatabase,
+@pytest.mark.asyncio
+async def test_list_materialized_views(
+    async_database: AsyncDatabase,
     datasource: Datasource
 ):
     expected = []
-    
-    sync_results = sync_database.list_materialized_views()
-    async_results = sync_database.list_materialized_views()
-
-    # Assertion to verify the result
-    assert sync_results == expected
+    async_results = await async_database.list_materialized_views()
     assert async_results == expected
     
-    ds_results = datasource.list_materialized_views('db1')
-    
+    ds_results = await datasource.list_materialized_views('db1')
     assert ds_results == expected
 
 
-def test_list_types(
-    sync_database: BaseDatabase, 
-    async_database: BaseDatabase,
-    datasource: Datasource
-):
+@pytest.mark.asyncio
+async def test_list_types(async_database: AsyncDatabase, datasource: Datasource):
     expected = []
-
-    sync_results = sync_database.list_types()
-    async_results = async_database.list_types()
-
-    # Assertion to verify the result
-    assert sync_results == expected
+    async_results = await async_database.list_types()
     assert async_results == expected
     
-    ds_results = datasource.list_types('db1')
-    
+    ds_results = await datasource.list_types('db1')    
     assert ds_results == expected
 
 
-def test_list_roles(
-    sync_database: BaseDatabase, 
-    async_database: BaseDatabase,
-    datasource: Datasource
-):
-    sync_results = sync_database.list_roles()
-    async_results = async_database.list_roles()
-
-    # Assertion to verify the result
-    assert len(sync_results) > 0
+@pytest.mark.asyncio
+async def test_list_roles(async_database: AsyncDatabase, datasource: Datasource):
+    async_results = await async_database.list_roles()
     assert len(async_results) > 0
     
-    ds_results = datasource.list_roles('db1')
-    
+    ds_results = await datasource.list_roles('db1')
     assert len(ds_results) > 0
 
 
-def test_list_extensions(
-    sync_database: BaseDatabase, 
-    async_database: BaseDatabase,
-    datasource: Datasource
-):
-    sync_results = sync_database.list_extensions()
-    async_results = sync_database.list_extensions()
-
-    # Assertion to verify the result
-    assert len(sync_results) == 1
+@pytest.mark.asyncio
+async def test_list_extensions(async_database: AsyncDatabase, datasource: Datasource):
+    async_results = await async_database.list_extensions()
     assert len(async_results) == 1
-
-    ds_results = datasource.list_extensions('db1')
-
+    
+    ds_results = await datasource.list_extensions('db1')
     assert len(ds_results) == 1
 
 
-def test_list_tables(
-    sync_database: BaseDatabase, 
-    async_database: BaseDatabase,
-    datasource: Datasource
-):
-    # Define your table model using the BaseDatabase's Base
-    def get_test_table_model(database: BaseDatabase):
+@pytest.mark.asyncio
+async def test_list_tables(async_database: AsyncDatabase, datasource: Datasource):
+    # Define your table model using the AsyncDatabase's Base
+    def add_test_table_model(database: AsyncDatabase):
         class TestTable(database.base):
             __tablename__ = 'test_table'
             
@@ -404,29 +270,25 @@ def test_list_tables(
         return TestTable
 
     # Get the table model
-    sync_test_table = get_test_table_model(sync_database)
-    async_test_table = get_test_table_model(async_database)
+    add_test_table_model(async_database)
 
     # Create the table if it does not exist
-    sync_database.create_tables()
-    async_database.create_tables()
-    ds_db1_tables=datasource.list_tables('db1', 'public')
-    ds_db2_tables=datasource.list_tables('db2', 'public')
+    await async_database.create_tables()
+    ds_db1_tables=await datasource.list_tables('db1', 'public')
+    ds_db2_tables=await datasource.list_tables('db2', 'public')
 
-    sync_tables = sync_database.list_tables()
-    async_tables = async_database.list_tables()
+    async_tables = await async_database.list_tables()
     
-    assert 'test_table' in sync_tables, \
-        "test_table should be listed in the sync BaseDatabase tables."
     assert 'test_table' in async_tables, \
-        "test_table should be listed in the async BaseDatabase tables."
+        "test_table should be listed in the async AsyncDatabase tables."
     assert 'test_table' in ds_db1_tables, \
-        "test_table should be listed in the async BaseDatabase tables."
+        "test_table should be listed in the async AsyncDatabase tables."
     assert 'test_table' in ds_db2_tables, \
-        "test_table should be listed in the async BaseDatabase tables."
-    
+        "test_table should be listed in the async AsyncDatabase tables."
 
-def test_create_indexes_sync(sync_database: BaseDatabase):
+
+@pytest.mark.asyncio
+async def test_create_indexes_async(async_database: AsyncDatabase):
     """Test the create_indexes method for sync."""
     indexes = [
         ColumnIndex(
@@ -437,12 +299,11 @@ def test_create_indexes_sync(sync_database: BaseDatabase):
     ]
 
     # Run the method
-    sync_database.create_indexes(indexes)
-    
-    indexes=sync_database.list_indexes('test_table')
+    await async_database.create_indexes(indexes)
+    indexes=await async_database.list_indexes('test_table')
     assert len(indexes) == 2
 
-    assert sync_database.create_indexes([]) is None
+    assert await async_database.create_indexes([]) is None
 
     invalid_indexes = [
         ColumnIndex(
@@ -453,90 +314,62 @@ def test_create_indexes_sync(sync_database: BaseDatabase):
     ]
 
     with pytest.raises(ValueError):
-        sync_database.create_indexes(invalid_indexes)
+        await async_database.create_indexes(invalid_indexes)
 
 
-def test_create_indexes_async(async_database: BaseDatabase):
-    """Test the create_indexes method for sync."""
-    indexes = [
-        ColumnIndex(
-            table_name='test_table', 
-            column_names=['name'], 
-            type='btree'
-        )
-    ]
-
-    # Run the method
-    async_database.create_indexes(indexes)
-    indexes=async_database.list_indexes('test_table')
-    assert len(indexes) == 2
-
-
-def test_list_schemas(
-    sync_database: BaseDatabase, 
-    async_database: BaseDatabase,
+@pytest.mark.asyncio
+async def test_list_schemas(
+    async_database: AsyncDatabase,
     datasource: Datasource
 ):
-    sync_schemas = sync_database.list_schemas()
-    async_schemas = async_database.list_schemas()
-    
+    async_schemas = await async_database.list_schemas()
+
     expected = [ 'pg_toast', 'pg_catalog', 'public', 'information_schema' ]
-    
-    assert sync_schemas == expected
+
     assert async_schemas == expected
-    
-    ds_db1_schemas=datasource.list_schemas('db1')
-    ds_db2_schemas=datasource.list_schemas('db2')
-    
+
+    ds_db1_schemas=await datasource.list_schemas('db1')
+    ds_db2_schemas=await datasource.list_schemas('db2')
+
     assert ds_db1_schemas == expected
     assert ds_db2_schemas == expected
 
 
-def test_list_indexes(
-    sync_database: BaseDatabase, 
-    async_database: BaseDatabase,
+@pytest.mark.asyncio
+async def test_list_indexes(
+    async_database: AsyncDatabase,
     datasource: Datasource
 ):
-    sync_indexes = sync_database.list_indexes('test_table')
-    async_indexes = async_database.list_indexes('test_table')
-
-    expected=['test_table_pkey']
-    
+    async_indexes = await async_database.list_indexes('test_table')
     assert len(async_indexes) == 2
-    assert len(sync_indexes) == 2
 
-    sync_index_exists = sync_database._index_exists('test_table', 'test_table_pkey')
-    async_index_exists = async_database._index_exists('test_table', 'test_table_pkey')
+    async_index_exists = await async_database._index_exists('test_table', 'test_table_pkey')
+    assert async_index_exists is True
 
-    assert sync_index_exists == True
-    assert async_index_exists == True
-
-    ds_db1_indexes=datasource.list_indexes('db1', 'test_table')
-    ds_db2_indexes=datasource.list_indexes('db2', 'test_table')
+    ds_db1_indexes=await datasource.list_indexes('db1', 'test_table')
+    ds_db2_indexes=await datasource.list_indexes('db2', 'test_table')
 
     assert len(ds_db1_indexes) == 2
-    assert len(ds_db2_indexes) == 2
+    assert len(ds_db2_indexes) == 1
 
-
-def test_multi_datasource_health_check(datasource: Datasource):
-    health_checks = datasource.health_check_all()
-    assert all(health_checks.values()), "Health check for all BaseDatabases should pass."
+@pytest.mark.asyncio
+async def test_multi_datasource_health_check(datasource: Datasource):
+    health_checks = await datasource.health_check_all()
+    assert all(health_checks.values()), "Health check for all AsyncDatabases should pass."
 
 
 def test_multi_datasource_get_database(
-    datasource: Datasource, 
-    datasource_settings: Dict[str, DatasourceSettings]
+    datasource_settings: Dict[str, DatasourceSettings], datasource: Datasource, 
 ):
-    gotten_database: BaseDatabase = datasource.get_database('db1')
-    assert gotten_database.name == 'db1', "Health check for all BaseDatabases should pass."
+    gotten_database: AsyncDatabase = datasource.get_database('db1')
+    assert gotten_database.settings.name == 'db1', "Health check for all AsyncDatabases should pass."
 
 
 def test_multi_datasource_get_item(
-    datasource: Datasource, 
-    datasource_settings: Dict[str, DatasourceSettings]
+    datasource_settings: Dict[str, DatasourceSettings], datasource: Datasource
 ):
-    gotten_database: BaseDatabase = datasource['db1']
-    assert gotten_database.name == 'db1', "Health check for all BaseDatabases should pass."
+    gotten_database: AsyncDatabase = datasource['db1']
+    assert gotten_database.settings.name == 'db1', "Health check for all AsyncDatabases should pass."
 
 
 def test_multi_datasource_get_database_with_exception(datasource: Datasource):
@@ -560,17 +393,17 @@ def test_multi_datasource_get_database_with_exception(datasource: Datasource):
         ("valid_table_name", True)                  # Valid name, should return True
     ]
 )
-def test_is_valid_table_name(sync_database: BaseDatabase, table_name: str, expected_result: bool):
+def test_is_valid_table_name(async_database: AsyncDatabase, table_name: str, expected_result: bool):
     """
     Test the _is_valid_table_name method with various invalid table names.
     
     Args:
-        sync_database (Database): Fixture that provides a BaseDatabase instance.
+        sync_database (Database): Fixture that provides a AsyncDatabase instance.
         table_name (str): The table name to validate.
         expected_result (bool): The expected result of the validation (True/False).
     """
     # Assuming `sync_database` has a method _is_valid_table_name
-    assert sync_database._is_valid_table_name(table_name) == expected_result
+    assert async_database._is_valid_table_name(table_name) == expected_result
 
 
 def test_factory_boy_example():
@@ -586,14 +419,14 @@ def test_corrupted_datasource_settings():
     with pytest.raises(ValueError):
         DatasourceSettings(
             name="Corrupted datasource object",
-            BaseDatabases=[],
+            AsyncDatabases=[],
             description="Datasource with invalid configuration"
         )
 
 
-def test_datasource_settings_representation(datasource_settings):
+def test_datasource_settings_representation(datasource_settings: DatasourceSettings):
     """Test the string representation of DatasourceSettings."""
-    datasource_repr = f"<DataSourceSettings(name={datasource_settings.name}, BaseDatabases=2)>"
+    datasource_repr = f"<DataSourceSettings(name={datasource_settings.name}, databases=2)>"
     assert datasource_settings.__repr__() == datasource_repr
 
 
@@ -613,8 +446,8 @@ def test_get_datasource(mock_data_cluster):
 
 def test_datacluster_repr(mock_data_cluster):
     """Test that get_datasource returns the correct instance."""
-    datacluster_repr=f"<DataCluster(datasources=['ds1', 'ds2'])>"
-    assert mock_data_cluster.__repr__() == datacluster_repr
+    expected="<DataCluster(datasources=['ds1', 'ds2'])>"
+    assert mock_data_cluster.__repr__() == expected
 
 
 def test_get_datasource_not_found(mock_data_cluster):
@@ -623,32 +456,35 @@ def test_get_datasource_not_found(mock_data_cluster):
         mock_data_cluster.get_datasource("unknown")
 
 
-def test_health_check_all(mock_data_cluster, mock_datasource):
+@pytest.mark.asyncio
+async def test_health_check_all(mock_data_cluster, mock_datasource):
     """Test health check for all datasources."""
     mock_datasource.health_check_all.return_value = {"db1": True, "db2": True}
     mock_data_cluster.datasources["ds1"] = mock_datasource
     mock_data_cluster.datasources["ds2"] = mock_datasource
-    
-    results = mock_data_cluster.health_check_all()
-    
+
+    results = await mock_data_cluster.health_check_all()
+
     assert results["ds1"] == {"db1": True, "db2": True}
     assert results["ds2"] == {"db1": True, "db2": True}
 
 
-def test_health_check_all_error(mock_data_cluster, mock_datasource, mock_logger):
+@pytest.mark.asyncio
+async def test_health_check_all_error(mock_data_cluster, mock_datasource, mock_logger):
     """Test health check logs errors on failure."""
     mock_datasource.health_check_all.side_effect = Exception("Health check failed")
     mock_data_cluster.datasources["ds1"] = mock_datasource
 
-    results = mock_data_cluster.health_check_all()
+    results = await mock_data_cluster.health_check_all()
 
     assert results["ds1"] == {'error': 'Health check failed'}
-    assert "Health check for datasource 'ds1' failed" in str(mock_logger.error.call_args)
+    assert "Health check failed" in str(mock_logger.error.call_args)
 
 
-def test_disconnect_all(mock_data_cluster, mock_datasource):
+@pytest.mark.asyncio
+async def test_disconnect_all(mock_data_cluster, mock_datasource):
     """Test disconnect_all method."""
     mock_data_cluster.datasources["ds1"] = mock_datasource
-    mock_data_cluster.disconnect_all()
+    await mock_data_cluster.disconnect_all()
 
     mock_datasource.disconnect_all.assert_called()

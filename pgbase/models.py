@@ -64,7 +64,6 @@ class DatabaseSettings(BaseModel):
     default_port: int = 5432
     pool_size: int = Field(default=DEFAULT_POOL_SIZE, gt=0)
     max_overflow: int = Field(default=DEFAULT_MAX_OVERFLOW, ge=0)
-    auto_create_db: bool = Field(default=False)
 
     @property
     def name(self) -> str:

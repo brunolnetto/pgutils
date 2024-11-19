@@ -14,7 +14,7 @@ from pgbase.core import AsyncDatabase, Datasource, DataCluster
 from pgbase.models import DatabaseSettings, DatasourceSettings
 from tests.testing import prepare_database
 
-DEFAULT_PORT=5432
+DEFAULT_PORT=5433
 
 # Database configuration constants
 DB_NAME = "mydb"
@@ -26,6 +26,7 @@ ASYNC_DB_URL = f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}
 def default_port():
     return DEFAULT_PORT
 
+
 @pytest.fixture(scope="session")
 def invalid_uri_config():
     return {
@@ -34,54 +35,24 @@ def invalid_uri_config():
         "admin_password": "postgres",
         "async_mode": False,
         "pool_size": 10,
-        "max_overflow": 5,
-        "auto_create_db": False
+        "max_overflow": 5
     }
+
 
 @pytest.fixture(scope="session")
 def databases_settings():
     settings_dict = {
-        "sync": {
+        "db1": {
             "uri": f"postgresql+psycopg://postgres:postgres@localhost:{DEFAULT_PORT}/db1",
             "admin_username": "postgres",
             "admin_password": "postgres",
-            "async_mode": False,
-            "auto_create_db": True
+            "async_mode": False
         },
-        "async": {
+        "db2": {
             "uri": f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}/db2",
             "admin_username": "postgres",
             "admin_password": "postgres",
-            "async_mode": True,
-            "auto_create_db": True
-        }
-    }
-    
-    return {
-        settings_name: DatabaseSettings(**settings_values)
-        for settings_name, settings_values in settings_dict.items()
-    }
-
-@pytest.fixture(scope="session")
-def database_settings():
-    settings_dict = {
-        "sync": {
-            "uri": f"postgresql+psycopg://postgres:postgres@localhost:{DEFAULT_PORT}/db",
-            "admin_username": "postgres",
-            "admin_password": "postgres",
-            "auto_create_db": True
-        },
-        "async": {
-            "uri": f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}/db",
-            "admin_username": "postgres",
-            "admin_password": "postgres",
-            "auto_create_db": True
-        },
-        "invalid": {
-            "uri": f"postgresql+asyncpg://postgres:postgres@anotherhost:{DEFAULT_PORT}/db",
-            "admin_username": "postgres",
-            "admin_password": "postgres",
-            "auto_create_db": True
+            "async_mode": True
         }
     }
     
@@ -91,23 +62,24 @@ def database_settings():
     }
 
 
+
 @pytest.fixture(scope="session")
-def sync_settings_without_auto_create():
+def async_settings_without_auto_create():
     return DatabaseSettings(**{
-        "uri": f"postgresql://postgres:postgres@localhost:{DEFAULT_PORT}/db_test",
+        "uri": f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}/db_test",
         "admin_username": "postgres",
-        "admin_password": "postgres",
-        "auto_create_db": False
+        "admin_password": "postgres"
     })
+
 
 @pytest.fixture(scope="session")
 def sync_settings_without_db_name():
     return DatabaseSettings(**{
-        "uri": f"postgresql://postgres:postgres@localhost:{DEFAULT_PORT}",
+        "uri": f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}",
         "admin_username": "postgres",
-        "admin_password": "postgres",
-        "auto_create_db": False
+        "admin_password": "postgres"
     })
+
 
 @pytest.fixture(scope="function")
 def database_without_db_name(sync_settings_without_db_name):
@@ -116,19 +88,16 @@ def database_without_db_name(sync_settings_without_db_name):
 
 
 @pytest.fixture(scope="function")
-def database_without_auto_create(sync_settings_without_auto_create):
-    db = AsyncDatabase(sync_settings_without_auto_create)
+def database_without_auto_create(async_settings_without_auto_create):
+    db = AsyncDatabase(async_settings_without_auto_create)
     yield db
 
-@pytest.fixture(scope="function")
-def sync_database(databases_settings):
-    db = Database(databases_settings['sync'])
-    yield db
 
 @pytest.fixture(scope="function")
 def async_database(databases_settings):
-    db = AsyncDatabase(databases_settings['async'])
+    db = AsyncDatabase(databases_settings['db1'])
     yield db
+
 
 @pytest.fixture(scope="session")
 def datasource_settings(databases_settings: Dict[str, DatabaseSettings]):
@@ -139,16 +108,18 @@ def datasource_settings(databases_settings: Dict[str, DatabaseSettings]):
         description="Datasource with both sync and async databases"
     )
 
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_database(datasource_settings: DatasourceSettings):
     for database in datasource_settings.databases:
         prepare_database(str(database.admin_uri), str(database.uri), database.name)
 
+
 @pytest.fixture
 def datasource(datasource_settings: DatasourceSettings):
     datasource = Datasource(datasource_settings)
-    yield datasource
-    datasource.disconnect_all()
+    return datasource
+
 
 @pytest.fixture(scope="session")
 def sync_db_engine():
@@ -185,10 +156,12 @@ async def async_session_factory():
     # Ensure engine disposal after the session is done
     await async_engine.dispose()
 
+
 @pytest.fixture(scope='function')
 def mock_logger():
     """Fixture for mocking a logger."""
     return MagicMock()
+
 
 class LoggerMock:
     def __init__(self):
@@ -196,20 +169,21 @@ class LoggerMock:
         self.error = MagicMock()
         self.warning = MagicMock()
 
+
 class DatabaseSettingsFactory(factory.Factory):
     class Meta:
         model = DatabaseSettings
 
     name = factory.Sequence(lambda n: f"db{n}")
     uri = factory.LazyFunction(
-        lambda: f"postgresql://user:password@localhost:5432/db{random.randint(1, 1000)}")  # Generating a valid URL string
+        lambda: f"postgresql+asyncpg://user:password@localhost:5432/db{random.randint(1, 1000)}")  # Generating a valid URL string
     admin_username = "admin"
     admin_password = "password"
     default_port = 5432
     async_mode = False
     pool_size = 10
     max_overflow = 5
-    auto_create_db = False
+
 
 class DatasourceSettingsFactory(factory.Factory):
     class Meta:
@@ -225,10 +199,12 @@ class DatasourceSettingsFactory(factory.Factory):
     connection_timeout = 30
     retry_attempts = 3
 
+
 @pytest.fixture
 def mock_datasource():
     """Fixture for mocking a Datasource instance."""
     return create_autospec(Datasource)
+
 
 def create_mocked_datasource():
     """Create a mocked Datasource instance using factories."""
@@ -254,6 +230,7 @@ def create_mocked_datasource():
         db.create_database = MagicMock()
 
     return datasource
+
 
 def create_mocked_data_cluster():
     """Create a mocked DataCluster instance using factories."""
@@ -286,10 +263,12 @@ def create_mocked_data_cluster():
 
     return data_cluster
 
+
 @pytest.fixture
 def datasource_settings_factory():
     """Fixture to create mock DatasourceSettings for tests."""
     return DatasourceSettingsFactory
+
 
 @pytest.fixture(scope="function")
 def mock_data_cluster(datasource_settings_factory, mock_logger):

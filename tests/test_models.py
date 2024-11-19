@@ -2,12 +2,12 @@ import pytest
 
 from pydantic import ValidationError
 from sqlalchemy import text
-from sqlalchemy.orm import Session
 
-from pgbase.models import DatabaseSettings, ColumnIndex, TablePaginator, QueryValidator
+from pgbase.models import (
+    DatabaseSettings, ColumnIndex, QueryValidator, 
+    QueryValidationError, ExcessiveSelectWarning,
+)
 from pgbase.constants import DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD
-from tests.testing import populate_database
-from .conftest import SYNC_DB_URL, DB_NAME
 
 
 def test_database_config_valid():

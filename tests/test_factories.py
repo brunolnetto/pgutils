@@ -18,10 +18,8 @@ def test_database_settings_factory():
     assert db_settings.admin_username == "admin"
     assert db_settings.admin_password == "password"
     assert db_settings.default_port == 5432
-    assert db_settings.async_mode is False
     assert db_settings.pool_size == 10
     assert db_settings.max_overflow == 5
-    assert db_settings.auto_create_db is False
 
 
 def test_datasource_settings_factory():
@@ -42,17 +40,15 @@ def test_datasource_settings_factory():
         assert db.admin_username == "admin"
         assert db.admin_password == "password"
         assert db.default_port == 5432
-        assert db.async_mode is False
         assert db.pool_size == 10
         assert db.max_overflow == 5
-        assert db.auto_create_db is False
 
 
 def test_database_settings_factory_validation():
     """Test that DatabaseSettings raises validation error with invalid inputs."""
     with pytest.raises(ValidationError):
         # Attempt to create DatabaseSettings with an invalid uri
-        invalid_db_settings = DatabaseSettingsFactory(uri="invalid_uri")
+        DatabaseSettingsFactory(uri="invalid_uri")
 
 
 def test_mocked_data_cluster():

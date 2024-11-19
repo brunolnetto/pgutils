@@ -102,7 +102,7 @@ async def test_run_async_method_no_event_loop():
 
 def test_run_async_method_with_non_callable():
     """Test running an async method with no current event loop."""
-    with pytest.raises(ValueError) as exc:
+    with pytest.raises(ValueError):
         run_async_method('not_callable', 5)
 
 
@@ -113,7 +113,7 @@ async def test_run_async_method_with_running_event_loop():
         return x * 2
 
     # Manually create and run the event loop
-    loop = asyncio.get_event_loop()
+    asyncio.get_event_loop()
     task = run_async_method(sample_async_method, 5)
     result = await task
     assert result == 10
@@ -217,6 +217,6 @@ def test_no_username_or_password():
     assert validate_postgresql_uri(uri) == uri
 
 
-def test_mask_sensitive_data(sync_database: AsyncDatabase):
-    masked_uri = mask_sensitive_data(sync_database.uri)
+def test_mask_sensitive_data(async_database: AsyncDatabase):
+    masked_uri = mask_sensitive_data(async_database.uri)
     assert "***" in masked_uri, "Sensitive data should be masked."

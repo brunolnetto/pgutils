@@ -4,7 +4,7 @@ from logging import getLogger, Logger
 from asyncio import Lock
 from re import match
 import asyncio
-import asyncpg
+from asyncpg import create_pool, Connection
 import psutil
 
 from sqlalchemy import DDL
@@ -15,15 +15,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy.exc import ProgrammingError, OperationalError
 from ping3 import ping, errors
-import anyio
 
 from .models import (
-    DatasourceSettings, DatabaseSettings, TableConstraint, Trigger, ColumnIndex, TablePaginator
+    DatasourceSettings, 
+    DatabaseSettings, 
+    TableConstraint, 
+    Trigger, 
+    ColumnIndex, 
+    TablePaginator
 )
 from .utils import (
     mask_sensitive_data, validate_schema_name, retry_async
 )
 from .constants import PAGINATION_BATCH_SIZE, DEFAULT_HEALTHCHECK_TIMEOUT_S, MAX_RETRIES
+from .models import DatabaseConnection
 from .base import BaseDatabase
 
 class SyncDatabase(BaseDatabase):
@@ -56,13 +61,16 @@ class AsyncDatabase(BaseDatabase):
         self.base = declarative_base(metadata=MetaData())
         self.logger = logger or getLogger(__name__)
 
+        # Create engines and sessionmakers
         self.admin_engine = self._create_admin_engine()
         self.engine = self._create_engine()
-        self.session_maker = self._create_sessionmaker()
-        self.indexes_lock = Lock()
 
-        if settings.name and settings.auto_create_db:
-            self.create_database_if_not_exists(settings.name)
+        # Create sessionmaker
+        self.session_maker = self._create_sessionmaker()
+
+        # Initialize index cache
+        self.indexes_lock = Lock()
+        self.pool = None
 
     async def init(self):
         await self.init_pool()
@@ -113,12 +121,32 @@ class AsyncDatabase(BaseDatabase):
         """
         try:
             # Create a connection pool for the database
-            self.pool = await asyncpg.create_pool(str(self.uri), min_size=5, max_size=self.settings.pool_size)
+            credentials=f"{self.uri.username}:{self.uri.password}"
+            route=f"{self.uri.host}:{self.uri.port}/{self.uri.database}"
+            dsn = f"postgresql://{credentials}@{route}"
+            self.pool = await create_pool(
+                dsn=dsn,
+                min_size=1,                             # Minimum number of connections in the pool
+                max_size=self.settings.pool_size,       # Maximum number of connections in the pool
+                max_inactive_connection_lifetime=300,   # Close inactive connections after 5 minutes
+            )
             self.logger.info("Database connection pool initialized.")
         except Exception as e:
             self.logger.error(f"Failed to initialize database pool: {e}")
 
-    async def _get_connection(self):
+
+
+    async def close_pool(self):
+        """
+        Closes the connection pool when the application shuts down.
+        """
+        if self.pool:
+            await self.pool.close()
+            self.logger.info("Database connection pool closed.")
+
+
+    @asynccontextmanager
+    async def _acquire_connection(self):
         """
         Acquires a connection from the pool.
         
@@ -127,25 +155,9 @@ class AsyncDatabase(BaseDatabase):
         """
         if self.pool is None:
             await self.init_pool()
-        connection = await self.pool.acquire()
-        return connection
+        async with self.pool.acquire() as connection:
+            yield connection
 
-    async def _release_connection(self, connection: asyncpg.Connection):
-        """
-        Releases a connection back to the pool.
-        
-        Args:
-            connection (asyncpg.Connection): The connection object to release.
-        """
-        await self.pool.release(connection)
-    
-    async def close_pool(self):
-        """
-        Closes the connection pool when the application shuts down.
-        """
-        if self.pool:
-            await self.pool.close()
-            self.logger.info("Database connection pool closed.")
 
     def _is_valid_table_name(self, table_name: str) -> bool:
         """Validate table name against SQL injection, reserved keywords, and special characters."""
@@ -158,9 +170,10 @@ class AsyncDatabase(BaseDatabase):
         pattern = r"^[a-zA-Z_][a-zA-Z0-9_]*$"
         is_valid = match(pattern, table_name) is not None
 
+        upper_table_name = table_name.upper()
+
         # Check if table name is exactly a reserved keyword
         if is_valid:
-            upper_table_name = table_name.upper()
             if upper_table_name in self.RESERVED_KEYWORDS:
                 self.logger.warning(f"Invalid table name attempted: '{table_name}' (reserved keyword)")
                 is_valid = False
@@ -182,6 +195,7 @@ class AsyncDatabase(BaseDatabase):
 
         return is_valid
 
+
     def check_database_exists(self, db_name: Optional[str] = None) -> bool:
         """Checks if the specified database exists using the admin engine."""
         db_name_to_check = db_name or self.settings.name
@@ -198,7 +212,8 @@ class AsyncDatabase(BaseDatabase):
             self.logger.error(f"Error checking database existence: {e}")
             return False
 
-    async def create_database_if_not_exists(self, db_name: Optional[str] = None):
+
+    def create_database_if_not_exists(self, db_name: Optional[str] = None):
         """Creates the database if it does not already exist."""
         db_name = db_name or self.settings.name
         if not db_name:
@@ -206,9 +221,9 @@ class AsyncDatabase(BaseDatabase):
             return
 
         try:
-            async with self.admin_engine.connect() as connection:
+            with self.admin_engine.connect() as connection:
                 query = text(f"CREATE DATABASE {db_name};")
-                await connection.execute(query)
+                connection.execute(query)
                 self.logger.info(f"Database '{db_name}' created successfully.")
         except ProgrammingError as e:
             if "already exists" not in str(e):
@@ -217,7 +232,7 @@ class AsyncDatabase(BaseDatabase):
             self.logger.info(f"Database '{db_name}' already exists.")
 
 
-    async def drop_database_if_exists(self, db_name: Optional[str] = None):
+    def drop_database_if_exists(self, db_name: Optional[str] = None):
         """Drops the database if it exists."""
         db_name = db_name or self.settings.name
         if not db_name:
@@ -225,43 +240,43 @@ class AsyncDatabase(BaseDatabase):
             return
 
         try:
-            async with self.admin_engine.connect() as connection:
+            with self.admin_engine.connect() as connection:
                 terminate_query = text(""" 
                     SELECT pg_terminate_backend(pg_stat_activity.pid)
                     FROM pg_stat_activity
                     WHERE pg_stat_activity.datname = :db_name
                     AND pid <> pg_backend_pid();
                 """)
-                await connection.execute(terminate_query, {"db_name": db_name})
+                connection.execute(terminate_query, {"db_name": db_name})
                 self.logger.info(f"Terminated active connections for database '{db_name}'.")
 
                 drop_query = text(f"DROP DATABASE IF EXISTS \"{db_name}\";")
-                await connection.execute(drop_query)
+                connection.execute(drop_query)
                 self.logger.info(f"Database '{db_name}' dropped successfully.")
         except OperationalError as e:
             self.logger.error(f"Error dropping database: {e}")
 
+
     async def column_exists(self, schema_name: str, table_name: str, column_name: str) -> bool:
         """Checks if the specified column exists in the table."""
-        connection = await self._get_connection()  # Get a connection from the pool
-        try:
-            query = """
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_name = $1
-                AND table_schema = $2;
-            """
-            # Execute the query
-            result = await connection.fetch(query, table_name, schema_name)
-            
-            # Extract column names from the result and check if the column exists
-            columns = {row['column_name'] for row in result}
-            return column_name in columns
-        except Exception as e:
-            self.logger.error(f"Error checking column existence: {e}")
-            return False
-        finally:
-            await self._release_connection(connection)  # Ensure the connection is returned to the pool
+        async with self._acquire_connection() as connection:
+            try:
+                query = """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = $1
+                    AND table_schema = $2;
+                """
+                # Execute the query
+                result = await connection.fetch(query, table_name, schema_name)
+                
+                # Extract column names from the result and check if the column exists
+                columns = {row['column_name'] for row in result}
+                return column_name in columns
+            except Exception as e:
+                self.logger.error(f"Error checking column existence: {e}")
+                return False
+
 
     def _measure_network_latency(self, host: str = "8.8.8.8") -> float:
         """
@@ -284,12 +299,13 @@ class AsyncDatabase(BaseDatabase):
             self.logger.error(f"Ping error when measuring latency to {host}: {e}")
             return float('inf')
 
+
     def _adjust_batch_size(self) -> int:
         """Adjust the batch size based on system load."""
         cpu_usage = psutil.cpu_percent(interval=1) / 100  # Get CPU usage percentage
         mem_usage = psutil.virtual_memory().percent / 100  # Get memory usage percentage
         disk_usage = psutil.disk_usage('/').percent / 100  # Disk usage
-        net_io = psutil.net_io_counters()  # Network I/O
+        psutil.net_io_counters()  # Network I/O
         latency = self._measure_network_latency()
 
         # Calculate system load based on all parameters
@@ -298,6 +314,7 @@ class AsyncDatabase(BaseDatabase):
         if load_factor > self.LOAD_THRESHOLD:
             return max(self.MIN_BATCH_SIZE, self.MAX_BATCH_SIZE // 2)
         return self.MAX_BATCH_SIZE  # Use maximum batch size under normal conditions
+
 
     async def _execute_in_batches(self, tasks, batch_size: int):
         """Execute tasks in smaller batches to avoid overloading the database."""
@@ -311,6 +328,7 @@ class AsyncDatabase(BaseDatabase):
             except Exception as e:
                 self.logger.error(f"An error occurred during batch execution: {e}")
                 raise
+
 
     async def create_indexes(self, indexes: List[ColumnIndex]):
         """Creates indexes based on the provided configuration, asynchronously with batching and caching."""
@@ -379,22 +397,23 @@ class AsyncDatabase(BaseDatabase):
         if tasks:
             await self._execute_in_batches(tasks, batch_size)
 
+
     async def _execute_create_index(self, index_stmt: DDL):
         """Executes the index creation statement using a connection from the pool."""
-        connection = await self._get_connection()  # Acquire connection from the pool
-        try:
-            # Execute the index creation statement
-            await connection.execute(str(index_stmt))
-        except Exception as e:
-            self.logger.error(f"Error creating index: {e}")
-            raise
-        finally:
-            await self._release_connection(connection)  # Release the connection back to the pool
+        async with self._acquire_connection() as connection:  # Acquire connection from the pool
+            try:
+                # Execute the index creation statement
+                await connection.execute(str(index_stmt))
+            except Exception as e:
+                self.logger.error(f"Error creating index: {e}")
+                raise
+
 
     async def _index_exists(self, table_name: str, index_name: str) -> bool:
         """Check if the specified index exists on the given table."""
         indexes = await self.list_indexes(table_name)
         return index_name in indexes
+
 
     async def schema_exists(self, schema_name):
         try:
@@ -409,19 +428,22 @@ class AsyncDatabase(BaseDatabase):
         result = await self.execute(query_str, {'table_schema': schema_name})
         return bool(result)
 
+
     async def check_active_connections(self) -> bool:
         """Checks if there are active connections in the database."""
-        query = text("SELECT COUNT(*) FROM pg_stat_activity WHERE state = 'active'")
-        result = await self.execute(query)
-        active_connections = len(result)
+        query = "SELECT COUNT(*) FROM pg_stat_activity WHERE state = 'active'"
+        result = await self.execute(query)  # Execute the raw SQL query
+        active_connections = result[0]["count"]  # Access the count from the first row
         return active_connections > 0
+
 
     async def check_replication_status(self) -> bool:
         """Checks if replication is active in the database (if applicable)."""
-        query = text("SELECT COUNT(*) FROM pg_stat_replication WHERE state = 'streaming'")
-        result = await self.execute(query)
-        replication_connections = len(result)
+        query = "SELECT COUNT(*) FROM pg_stat_replication WHERE state = 'streaming'"
+        result = await self.execute(query)  # Execute the raw SQL query
+        replication_connections = result[0]["count"]  # Access the count from the first row
         return replication_connections > 0
+
 
     async def health_check(
         self, 
@@ -433,57 +455,71 @@ class AsyncDatabase(BaseDatabase):
 
         # Define the health check action to be retried
         async def action(): 
-            connection = await self._get_connection()  # Acquire connection from the pool
             try:
                 # Perform checks
-                if not await self.check_active_connections(connection):
+                if not await self.check_active_connections():
                     self.logger.warning("No active database connections found.")
                     return False
 
-                if not await self.check_replication_status(connection):
+                if not await self.check_replication_status():
                     self.logger.warning("Replication is not active.")
-                    return False
 
                 self.logger.info("Database health check passed.")
                 return True
 
-            finally:
-                # Release connection back to the pool
-                await self._release_connection(connection)
+            except Exception as e:
+                self.logger.error(f"Health check failed: {e}")
+                return False
 
         # Call the retry_async function for retry logic
         return await retry_async(action, max_retries=max_retries, timeout=timeout)
 
+
     async def create_tables(self):
         """Create tables based on SQLAlchemy models."""
-        await self.base.metadata.create_all
+        self.base.metadata.create_all
+        self.logger.info("Successfully created all tables asynchronously.")
+
 
     async def drop_tables(self):
         """Unified method to drop tables synchronously or asynchronously."""
-        await self.base.metadata.drop_all
+        self.base.metadata.drop_all
         self.logger.info("Successfully dropped all tables asynchronously.")
 
-    async def execute(self, query: str, params: dict = None):
-        """Execute a SQL query and return results asynchronously."""
 
+    async def execute(self, query: str, params: dict = None):
+        """
+        Execute a SQL query and return results asynchronously.
+        """
         try:
             # Acquire a connection from the pool
-            connection = await self._get_connection()
+            async with self._acquire_connection() as connection:
+                if params:
+                    # Convert named placeholders to positional placeholders for asyncpg
+                    query, param_values = self._convert_to_asyncpg_query(query, params)
+                    result = await connection.fetch(query, *param_values)
+                else:
+                    result = await connection.fetch(query)
 
-            try:
-                query_text = text(query).bindparams(**params) if params else text(query)
-                result = await connection.execute(query_text)
-                return [row for row in result]
-            
-            finally:
-                # Release the connection back to the pool after the query is executed
-                await self._release_connection(connection)
+                # Return the result as a list of rows
+                return result
 
         except Exception as e:
             self.logger.error(f"Query execution failed: {e}")
-            # Re-raise the exception to allow higher-level handling
             raise
 
+    def _convert_to_asyncpg_query(self, query: str, params: dict):
+        """
+        Convert query with named placeholders (:name) to asyncpg-style positional placeholders ($1, $2, ...).
+        """
+        # Replace each named placeholder with a positional placeholder
+        positional_query = query
+        positional_values = []
+        for i, (key, value) in enumerate(params.items(), start=1):
+            positional_query = positional_query.replace(f":{key}", f"${i}")
+            positional_values.append(value)
+        
+        return positional_query, positional_values
 
     async def add_audit_trigger(self, table_name: str):
         """Add an audit trigger to the specified table."""
@@ -525,9 +561,11 @@ class AsyncDatabase(BaseDatabase):
         await self.execute(create_function_query)
         await self.execute(create_trigger_query)
 
+
     async def disconnect(self):
         """Cleans up and closes the database connections, synchronous or asynchronously."""
         await self.engine.dispose()
+
 
     async def paginate(
         self, conn: DatabaseConnection, 
@@ -538,6 +576,7 @@ class AsyncDatabase(BaseDatabase):
         paginator = TablePaginator(conn, query, params=params, batch_size=batch_size)
         async for page in paginator._paginated_query_async():
             yield page
+
 
     # 1. List tables
     async def list_tables(self, schema_name: str = 'public'):
@@ -559,12 +598,14 @@ class AsyncDatabase(BaseDatabase):
             self.logger.error(f"Failed to list tables in schema '{schema_name}': {e}")
             return []
 
+
     # 2. List Schemas
     async def list_schemas(self):
         """List all schemas in the database."""
         sync_query = "SELECT schema_name FROM information_schema.schemata;"
         result = await self.execute(sync_query)
         return [schema[0] for schema in result]
+
 
     # 3. List Indexes
     async def list_indexes(self,  table_name: str, schema_name: str = 'public'):
@@ -579,8 +620,9 @@ class AsyncDatabase(BaseDatabase):
             'table_name': table_name,
             'schema_name': schema_name
         }
-        result = await self.execute(sync_query, )
+        result = await self.execute(sync_query, params)
         return [index[0] for index in result]
+
 
     # 4. List Views
     async def list_views(self, schema_name='public'):
@@ -593,12 +635,14 @@ class AsyncDatabase(BaseDatabase):
         result = await self.execute(sync_query, {'table_schema': schema_name})
         return [view[0] for view in result]
 
+
     # 5. List Sequences
     async def list_sequences(self):
         """List all sequences in the database."""
         sync_query = "SELECT sequence_name FROM information_schema.sequences;"
         result = await self.execute(sync_query)
         return [sequence[0] for sequence in result]
+
 
     # 6. List Constraints
     async def list_constraints(self, table_name: str, schema_name: str = 'public') -> List[TableConstraint]:
@@ -642,6 +686,7 @@ class AsyncDatabase(BaseDatabase):
             foreign_table_name, foreign_column_name in result
         ]
 
+
     # 7. List Triggers
     async def list_triggers(self, table_name: str, schema_name: str = 'public'):
         """List all triggers for a specified table."""
@@ -666,6 +711,7 @@ class AsyncDatabase(BaseDatabase):
             ) for trigger_info in result
         ]
 
+
     # 8. List Functions
     async def list_functions(self):
         """List all functions in the database."""
@@ -675,6 +721,7 @@ class AsyncDatabase(BaseDatabase):
             WHERE routine_type = 'FUNCTION';
         """
         return await self.execute(sync_query)
+
 
     # 9. List Procedures
     async def list_procedures(self):
@@ -686,11 +733,13 @@ class AsyncDatabase(BaseDatabase):
         """
         return await self.execute(sync_query)
 
+
     # 10. List Materialized Views
     async def list_materialized_views(self):
         """List all materialized views in the database."""
         sync_query = "SELECT matviewname FROM pg_matviews;"
         return await self.execute(sync_query)
+
 
     # 11. List Columns
     async def list_columns(self, table_name: str, schema_name: str = 'public'):
@@ -708,11 +757,13 @@ class AsyncDatabase(BaseDatabase):
         result = await self.execute(sync_query, params)
         return [column[0] for column in result]
 
+
     # 12. List User-Defined Types
     async def list_types(self):
         """List all user-defined types in the database."""
         sync_query = "SELECT typname FROM pg_type WHERE typtype = 'e';"
         return await self.execute(sync_query)
+
 
     # 13. List Roles
     async def list_roles(self):
@@ -720,12 +771,14 @@ class AsyncDatabase(BaseDatabase):
         sync_query = "SELECT rolname FROM pg_roles;"
         return await self.execute(sync_query)
 
+
     # 14. List Extensions
     async def list_extensions(self) -> list:
         """List all extensions installed in the database."""
         sync_query = "SELECT extname FROM pg_extension;"
         return await self.execute(sync_query)
-    
+
+
     def __repr__(self):
         return f"<AsyncDatabase(uri={mask_sensitive_data(self.uri)})>"
 
@@ -751,7 +804,6 @@ class Datasource:
         # Initialize and validate database instances
         self.databases: Dict[str, AsyncDatabase] = {}
         for database_settings in settings.databases:
-            
             self.databases[database_settings.name] = AsyncDatabase(database_settings)
 
     async def _call_database_method(self, database_name: str, method_name: str, *args: Any):
@@ -886,13 +938,13 @@ class Datasource:
         """Performs health checks on all databases."""
         return await self._call_database_method_all('health_check')
 
-    def create_tables_all(self):
+    async def create_tables_all(self):
         """Creates tables for all databases."""
-        self._call_database_method_all('create_tables')
+        await self._call_database_method_all('create_tables')
 
-    def disconnect_all(self):
+    async def disconnect_all(self):
         """Disconnects all databases."""
-        self._call_database_method_all('disconnect')
+        await self._call_database_method_all('disconnect')
 
     def __getitem__(self, database_name: str):
         return self.get_database(database_name)
@@ -959,17 +1011,17 @@ class DataCluster:
                 results[name] = {'error': str(e)}
         return results
 
-    def health_check_all(self) -> Dict[str, Dict[str, bool]]:
+    async def health_check_all(self) -> Dict[str, Dict[str, bool]]:
         """Performs health checks on all datasources."""
-        return self._call_datasource_method_all('health_check_all')
+        return await self._call_datasource_method_all('health_check_all')
 
-    def create_tables_all(self):
+    async def create_tables_all(self):
         """Creates tables for all datasources."""
-        self._call_datasource_method_all('create_tables_all')
+        await self._call_datasource_method_all('create_tables_all')
 
-    def disconnect_all(self):
+    async def disconnect_all(self):
         """Disconnects all datasources."""
-        self._call_datasource_method_all('disconnect_all')
+        await self._call_datasource_method_all('disconnect_all')
 
     def __repr__(self) -> str:
         return f"<DataCluster(datasources={list(self.datasources.keys())})>"
