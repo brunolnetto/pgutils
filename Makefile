@@ -201,7 +201,8 @@ bump: ## Bump version to user-provided {patch|minor|major} semantic version
 
 
 publish: clean ## build source and publish package
-	poetry publish --build
+	uv build
+	uv publish
 
 
 release: bump v=$(v) ## release package on PyPI

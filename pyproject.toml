@@ -18,7 +18,8 @@ dependencies=[
     "ping3 >= 4.0.8",
     "psutil >= 6.1.0",
     "pydantic >= 2.9.2",
-    'sqlalchemy[asyncio] >= 2.0.35; python_version < "3.2"']
+    'sqlalchemy[asyncio] >= 2.0.35; python_version < "3.2"'
+]
 
 [project.optional-dependencies]
 tests=[
@@ -28,6 +29,8 @@ tests=[
     "pytest-watch >= 4.2.0", 
     "pytest-mock >= 3.14.0", 
     "pytest-cov >= 6.0.0"]
+lint=[
+    "ruff>=0.7.4"]
 
 [project.urls]
 Homepage = "https://github.com/brunolnetto/pgbase"
