@@ -18,7 +18,8 @@ dependencies=[
     "ping3 >= 4.0.8",
     "psutil >= 6.1.0",
     "pydantic >= 2.9.2",
-    'sqlalchemy[asyncio] >= 2.0.35; python_version < "3.2"'
+    'sqlalchemy[asyncio] >= 2.0.35; python_version < "3.2"',
+    "factory >= 1.1",
 ]
 
 [project.optional-dependencies]

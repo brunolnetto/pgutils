@@ -40,30 +40,38 @@ PACKAGE_NAME = "pgbase"
 
 
 help:
-	@python -c "$$PRINT_HELP_PYSCRIPT" < $(MAKEFILE_LIST)
+	@python3 -c "$$PRINT_HELP_PYSCRIPT" < $(MAKEFILE_LIST)
 
 
-clean: clean-build clean-pyc clean-test clean-cache clean-docs ## remove all build, test, coverage, Python artifacts, cache and docs
+uv: ## Installs uv
+	pip install uv
 
 
-clean-docs: # remove docs for update
+env: ## Creates a virtual environment. Usage: make env
+	uv venv
+
+
+clean: clean-build clean-pyc clean-test clean-cache clean-docs ## Remove all build, test, coverage, Python artifacts, cache and docs
+
+
+clean-docs: # Removes docs for update
 	rm -fr "docs/$$PACKAGE_NAME.rst" "docs/modules.rst" "docs/conftest.rst" "docs/examples.rst" "docs/tests.rst" "docs/_build"
 
 
-clean-build: # remove build artifacts
+clean-build: # Removes build artifacts
 	rm -fr build/ dist/ .eggs/
 	find . -name '*.egg-info' -o -name '*.egg' -exec rm -fr {} +
 
 
-clean-pyc: # remove Python file artifacts
+clean-pyc: # Removes Python file artifacts
 	find . -name '*.pyc' -o -name '*.pyo' -o -name '*~' -exec rm -rf {} +
 
 
-clean-test: # remove test and coverage artifacts
+clean-test: # Removes test and coverage artifacts
 	rm -fr .tox/ .coverage coverage.* htmlcov/ .pytest_cache
 
 
-clean-cache: # remove test and coverage artifacts
+clean-cache: # Removes test and coverage artifacts
 	find . -name '*pycache*' -exec rm -rf {} +
 
 
@@ -78,32 +86,24 @@ replace: ## Replaces a token in the code. Usage: make replace token=your_token
 		--exclude=uv.lock)
 
 
-uv: ## Install uv
-	pip install uv
-
-
-env: ## Creates a virtual environment. Usage: make env
-	uv venv
-
-
-test: ## run tests quickly with the default Python
+test: ## Runs tests quickly with the default Python
 	uv run pytest --durations=10
 
 
-watch-test: ## run tests on watchdog mode
+watch-test: ## Runs tests on watchdog mode
 	uv run ptw --poll --clear .
 
 
-lint: clean ## perform inplace lint fixes
+lint: clean ## Performs inplace lint fixes
 	uv run ruff check --fix .
 
 
-cov: clean ##
+cov: clean ## Test coverages the source code 
 	uv run coverage run --source "$$PACKAGE_NAME" --omit "tests/*,*/__init__.py" -m pytest --durations=10
 	uv run coverage report -m
 
 
-watch-cov: clean ## check code coverage quickly with the default Python
+watch-cov: clean ## Checks code coverage quickly with the default Python
 	find . -name '*.py' | entr -c make cov
 
 
@@ -111,40 +111,52 @@ install: clean ## Installs the python requirements. Usage: make install
 	uv sync
 
 
-what: ## List all commits made since last version bump
-	git log --oneline "$$(git rev-list -n 1 "v$$(make --silent version)")..$$(git rev-parse HEAD)"
+what: ## Lists all commits made since the last release commit with a tag pattern 'release/ tag vX.Y.Z'
+	@LAST_RELEASE_COMMIT=$$(git log --oneline --grep="release/ tag v" -n 1 --pretty=format:"%H"); \
+	if [ -z "$$LAST_RELEASE_COMMIT" ]; then \
+		echo "Error: No release commit found with tag pattern 'release/ tag vX.Y.Z'."; \
+		exit 1; \
+	else \
+		echo "Last release commit: $$LAST_RELEASE_COMMIT"; \
+		git log --oneline "$$LAST_RELEASE_COMMIT..HEAD"; \
+	fi
 
 
-check-bump: # check if bump version is valid
+
+check-bump: ## Validates the version bump type
 	@if [ -z "$(v)" ]; then \
 		echo "Error: Missing version bump type. Use: make bump v={patch|minor|major}"; \
 		exit 1; \
 	fi
-	@if ! echo "patch minor major" | grep -qw "$(v)"; then \
-		echo "Error: Invalid version bump type '$(v)'. Use: patch, minor, or major."; \
-		exit 1; \
-	fi; \
 
-version:
+	@VALID_BUMPS="patch minor major"; \
+	if ! echo "$$VALID_BUMPS" | grep -qw "$(v)"; then \
+		echo "Error: Invalid version bump type '$(v)'. Valid types are: $$VALID_BUMPS."; \
+		exit 1; \
+	fi
+
+version: ## Echoes the package version
 	@echo $$(grep '^version =' pyproject.toml | awk '{print $$3}' | tr -d '"')
 
 
-echo: ## echo current package version
+echo: ## Echoes current package version
 	@PACKAGE_VERSION=$$(make --silent version); \
 	echo "Current package version: $$PACKAGE_VERSION"
 
 
-apply-bump: ## apply version bump
-	@if [ -z "$(v)" ]; then \
+apply-bump: ## Applies version bump
+	@# Ensure the bump type is provided
+	if [ -z "$(v)" ]; then \
 		echo "Error: Missing version bump type. Use: make apply-bump v={patch|minor|major}"; \
 		exit 1; \
-	fi; \
+	fi
 	\
-	# Validate bump type; \
-	if ! echo "patch minor major" | grep -qw "$(v)"; then \
-		echo "Error: Invalid bump type '$(v)'. Use: patch, minor, or major."; \
+	# Validate the bump type
+	VALID_BUMPS="patch minor major"; \
+	if ! echo "$$VALID_BUMPS" | grep -qw "$(v)"; then \
+		echo "Error: Invalid bump type '$(v)'. Valid types are: $$VALID_BUMPS."; \
 		exit 1; \
-	fi; \
+	fi
 	\
 	# Extract the current version from pyproject.toml; \
 	CURRENT_VERSION=$$(grep '^version =' pyproject.toml | awk '{print $$3}' | tr -d '"'); \
@@ -187,23 +199,27 @@ apply-bump: ## apply version bump
 	echo "Version bumped to $$NEW_VERSION"
 
 
-bump: ## Bump version to user-provided {patch|minor|major} semantic version
+bump: ## Bumps version to user-provided {patch|minor|major} semantic version
+	@NEW_VERSION=$$(grep '^version =' pyproject.toml | awk '{print $$3}' | tr -d '"');
+	@if [ "$(dry-run)" = "true" ]; then \
+		echo "Dry run: Version would be bumped to $$NEW_VERSION"; \
+		exit 0; \
+	fi
 	@$(MAKE) check-bump v=$(v)
 	@$(MAKE) apply-bump v=$(v)
 	uv lock
-	git add pyproject.toml uv.lock
-	@NEW_VERSION=$$(grep '^version =' pyproject.toml | awk '{print $$3}' | tr -d '"'); \
-	git commit -m "release: tag v$$NEW_VERSION"; \
+	@git add pyproject.toml uv.lock
+	@git commit -m "release: tag v$$NEW_VERSION"; \
 	git tag "v$$NEW_VERSION"; \
 	git push; \
-	git push --tags
-	echo "Version bumped to $$NEW_VERSION"
+	echo "Version bumped 
+	git push --tagsto $$NEW_VERSION"
 
 
-publish: clean ## build source and publish package
+publish: clean ## Builds source and publish package
 	uv build
 	uv publish
 
 
-release: bump v=$(v) ## release package on PyPI
+release: bump v=$(v) ## Releases package on PyPI
 	$(MAKE) -C publish
