@@ -283,35 +283,15 @@ class TablePaginator:
         validator = QueryValidator(self.query)
         validator.validate()
 
-    def _get_total_count_sync(self) -> int:
-        """Fetch the total count of records synchronously."""
-        count_query = f"SELECT COUNT(*) FROM ({self.query}) as total"
-        result = self.conn.execute(text(count_query).bindparams(**self.params))
-        return result.scalar()
-
-    async def _get_total_count_async(self) -> int:
-        """Fetch the total count of records asynchronously."""
+    async def get_total_count(self) -> int:
+        """Fetch the total count using the run_async_method utility."""
         count_query = f"SELECT COUNT(1) FROM ({self.query}) as total"
         result = await self.conn.execute(text(count_query).bindparams(**self.params))
         return result.scalar()
 
-    def get_total_count(self) -> int:
-        """Fetch the total count using the run_async_method utility."""
-        if isinstance(self.conn, (AsyncConnection, AsyncSession)):
-            return run_async_method(self._get_total_count_async)
-        return self._get_total_count_sync()
-
     def _get_batch_query(self) -> str:
         """Construct a paginated query with LIMIT and OFFSET."""
         return f"{self.query} LIMIT :limit OFFSET :offset"
-
-    def _fetch_batch_sync(self) -> List[Any]:
-        """Fetch a single batch synchronously."""
-        batch_query = text(self._get_batch_query()).bindparams(
-            limit=self.batch_size, offset=self.current_offset, **self.params
-        )
-        result: Result = self.conn.execute(batch_query)
-        return result.fetchall()
 
     async def _fetch_batch_async(self) -> List[Any]:
         """Fetch a single batch asynchronously."""
@@ -322,30 +302,23 @@ class TablePaginator:
         result = await self.conn.execute(batch_query)
         return result.fetchall()
 
-    def _paginated_query_sync(self) -> SyncPageGenerator:
-        """Synchronous generator to fetch results batch by batch."""
-        self.total_count = self._get_total_count_sync()
-
-        while self.current_offset < self.total_count:
-            batch = self._fetch_batch_sync()
-            yield batch
-            self.current_offset += self.batch_size
-
     async def _paginated_query_async(self) -> AsyncPageGenerator:
         """Asynchronous generator to fetch results batch by batch."""
-        self.total_count = await self._get_total_count_async()
+        self.total_count = await self.get_total_count()
 
         while self.current_offset < self.total_count:
             batch = await self._fetch_batch_async()
             yield batch
             self.current_offset += self.batch_size
 
-    def paginate(self) -> PageGenerator:
+    async def paginate(self) -> PageGenerator:
         """Unified paginate method to handle both sync and async queries."""
-        if isinstance(self.conn, AsyncDatabaseInteraction):
-            return self._paginated_query_async()
-        else:
-            return self._paginated_query_sync()
+        self.total_count = await self.get_total_count()
+
+        while self.current_offset < self.total_count:
+            batch = await self._fetch_batch_async()
+            yield batch
+            self.current_offset += self.batch_size
 
     def fetch_total_count(self) -> int:
         """Fetch the total count using the run_async_method utility."""

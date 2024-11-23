@@ -568,7 +568,7 @@ class AsyncDatabase(BaseDatabase):
 
 
     # 1. List tables
-    async def list_tables(self, schema_name: str = 'public'):
+    async def list_tables(self, schema_name: str = 'public') -> List[Any]:
         """List all tables in the specified schema."""
         if not await self.schema_exists(schema_name):
             error_message=f"Schema '{schema_name}' does not exist."
@@ -589,7 +589,7 @@ class AsyncDatabase(BaseDatabase):
 
 
     # 2. List Schemas
-    async def list_schemas(self):
+    async def list_schemas(self) -> List[Any]:
         """List all schemas in the database."""
         sync_query = "SELECT schema_name FROM information_schema.schemata;"
         result = await self.execute(sync_query)
@@ -597,7 +597,7 @@ class AsyncDatabase(BaseDatabase):
 
 
     # 3. List Indexes
-    async def list_indexes(self,  table_name: str, schema_name: str = 'public'):
+    async def list_indexes(self,  table_name: str, schema_name: str = 'public') -> List[Any]:
         """List all indexes for a given table."""
         sync_query = """
             SELECT indexname FROM pg_indexes 
@@ -614,7 +614,7 @@ class AsyncDatabase(BaseDatabase):
 
 
     # 4. List Views
-    async def list_views(self, schema_name='public'):
+    async def list_views(self, schema_name='public') -> List[Any]:
         """List all views in the specified schema."""
         sync_query = """
             SELECT table_name 
@@ -626,7 +626,7 @@ class AsyncDatabase(BaseDatabase):
 
 
     # 5. List Sequences
-    async def list_sequences(self):
+    async def list_sequences(self) -> List[Any]:
         """List all sequences in the database."""
         sync_query = "SELECT sequence_name FROM information_schema.sequences;"
         result = await self.execute(sync_query)
@@ -677,7 +677,7 @@ class AsyncDatabase(BaseDatabase):
 
 
     # 7. List Triggers
-    async def list_triggers(self, table_name: str, schema_name: str = 'public'):
+    async def list_triggers(self, table_name: str, schema_name: str = 'public') -> List[Any]:
         """List all triggers for a specified table."""
         sync_query = """
             SELECT * 
@@ -702,7 +702,7 @@ class AsyncDatabase(BaseDatabase):
 
 
     # 8. List Functions
-    async def list_functions(self):
+    async def list_functions(self) -> List[Any]:
         """List all functions in the database."""
         sync_query = """
             SELECT routine_name 
@@ -713,7 +713,7 @@ class AsyncDatabase(BaseDatabase):
 
 
     # 9. List Procedures
-    async def list_procedures(self):
+    async def list_procedures(self) -> List[Any]:
         """List all procedures in the database."""
         sync_query = """
             SELECT routine_name 
@@ -724,14 +724,14 @@ class AsyncDatabase(BaseDatabase):
 
 
     # 10. List Materialized Views
-    async def list_materialized_views(self):
+    async def list_materialized_views(self) -> List[Any]:
         """List all materialized views in the database."""
         sync_query = "SELECT matviewname FROM pg_matviews;"
         return await self.execute(sync_query)
 
 
     # 11. List Columns
-    async def list_columns(self, table_name: str, schema_name: str = 'public'):
+    async def list_columns(self, table_name: str, schema_name: str = 'public') -> List:
         """List all columns for a specified table in the schema."""
         sync_query = """
             SELECT column_name 
@@ -748,21 +748,21 @@ class AsyncDatabase(BaseDatabase):
 
 
     # 12. List User-Defined Types
-    async def list_types(self):
+    async def list_types(self) -> List:
         """List all user-defined types in the database."""
         sync_query = "SELECT typname FROM pg_type WHERE typtype = 'e';"
         return await self.execute(sync_query)
 
 
     # 13. List Roles
-    async def list_roles(self):
+    async def list_roles(self) -> List:
         """List all roles in the database."""
         sync_query = "SELECT rolname FROM pg_roles;"
         return await self.execute(sync_query)
 
 
     # 14. List Extensions
-    async def list_extensions(self) -> list:
+    async def list_extensions(self) -> List:
         """List all extensions installed in the database."""
         sync_query = "SELECT extname FROM pg_extension;"
         return await self.execute(sync_query)

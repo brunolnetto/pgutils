@@ -7,7 +7,11 @@ from pgbase.models import (
     DatabaseSettings, ColumnIndex, QueryValidator, 
     QueryValidationError, ExcessiveSelectWarning,
 )
-from pgbase.models import DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD
+from pgbase.models import (
+    TablePaginator,
+    DEFAULT_ADMIN_USERNAME, 
+    DEFAULT_ADMIN_PASSWORD
+)
 
 
 def test_database_config_valid():
@@ -218,185 +222,144 @@ def test_validate_uri_scheme(uri, expect_exception):
         assert str(settings.uri) == uri
 
 
-# @pytest.mark.asyncio
-# async def test_async_paginator(async_session_factory):
-#     # Initialize paginator with a query
-#     async for async_session in async_session_factory:
-#         paginator = TablePaginator(
-#             async_session, "SELECT name FROM public.test_table", batch_size=2
-#         )
-# 
-#         # Fetch and assert paginated results in batches
-#         expected_batches = [
-#             [('Alice', ), ('Bob', )],
-#             [('Charlie', ), ('David', )]
-#         ]
-# 
-#         results = []
-#         
-#         async for batch in paginator.paginate():
-#             results.append(batch)
-# 
-#         # Assert total number of batches
-#         assert len(results) == len(expected_batches)
-# 
-#         # Assert each batch
-#         for i, expected_batch in enumerate(expected_batches):
-#             assert results[i] == expected_batch
-#             
-#         query_count=await paginator.fetch_total_count()
-#         assert query_count == 4
-# 
-# @pytest.mark.asyncio
-# async def test_async_paginator_after_deleting_all_entries(async_session_factory):
-#     # Initialize paginator with a query
-#     async for async_session in async_session_factory:
-#         # Step 1: Delete all entries from the table
-#         delete_query = text("DELETE FROM test_table")
-#         await async_session.execute(delete_query)
-#         await async_session.commit()  # Commit the changes to apply deletion
-# 
-#         # Step 2: Prepare the paginator after deletion
-#         paginator = TablePaginator(
-#             conn=async_session, query="SELECT * FROM test_table", batch_size=2
-#         )
-# 
-#         # Step 3: Request the paginator to yield the pages (should yield nothing after deletion)
-#         async for page in paginator.paginate():
-#             assert len(page) == 0  # Since we deleted all rows, the page should be empty
-# 
-# 
-# def test_paginator(sync_session_factory):
-#     # Initialize paginator with a query
-#     session = sync_session_factory()
-#     paginator = TablePaginator(
-#         session, "SELECT name FROM public.test_table", batch_size=2
-#     )
-# 
-#     # Fetch and assert paginated results in batches
-#     expected_batches = [
-#         [('Alice', ), ('Bob', )],
-#         [('Charlie', ), ('David', )]
-#     ]
-# 
-#     results = []
-#     
-#     for batch in paginator.paginate():
-#         results.append(batch)
-# 
-#     # Assert total number of batches
-#     assert len(results) == len(expected_batches)
-# 
-#     # Assert each batch
-#     for i, expected_batch in enumerate(expected_batches):
-#         assert results[i] == expected_batch
-# 
-#     query_count=paginator.fetch_total_count()
-#     assert query_count == 4
-# 
-# def test_paginator_with_params(sync_session_factory):
-#     session = sync_session_factory()
-#     paginator = TablePaginator(
-#         session, "SELECT name FROM public.test_table WHERE name LIKE :name", params={'name': 'A%'}
-#     )
-# 
-#     # Fetch paginated results
-#     results = []
-#     for batch in paginator.paginate():
-#         results.extend(batch)
-# 
-#     assert len(results) == 1  # Only 'Alice' matches the condition
-#     assert results[0] == ('Alice', )
-# 
-# def test_sync_paginator_batches(sync_session_factory):
-#     session = sync_session_factory()
-#     paginator = TablePaginator(
-#         conn=session,
-#         query="SELECT name FROM public.test_table",
-#         batch_size=2
-#     )
-# 
-#     batches = []
-#     for batch in paginator.paginate():
-#         batches.append(batch)
-# 
-#     assert len(batches) == 2  # Should have 2 batches of 2 records
-#     assert batches[0] == [('Alice', ), ('Bob', )]
-#     assert batches[1] == [('Charlie', ), ('David', )]
-# 
-# def test_get_total_count(sync_session_factory):
-#     session=sync_session_factory()
-# 
-#     # Prepare the paginator
-#     paginator = TablePaginator(
-#         conn=session,
-#         query="SELECT name FROM test_table",
-#         batch_size=2
-#     )
-#     
-#     assert paginator.get_total_count() == 4
-# 
-# def test_generator_with_count(sync_session_factory):
-#     session=sync_session_factory()
-# 
-#     # Prepare the paginator
-#     paginator = TablePaginator(
-#         conn=session, query="SELECT name FROM test_table", batch_size=2
-#     )
-#     
-#     batch = next(paginator._paginated_query_sync())
-#     assert batch == [('Alice', ), ('Bob', )]
-#     assert paginator.total_count == 4
-# 
-# def test_sync_paginator_after_deleting_all_entries(sync_db_engine, sync_session_factory):
-#     sync_session: Session = sync_session_factory()
-# 
-#     # Step 1: Delete all entries from the table
-#     delete_query = text("DELETE FROM test_table")
-#     sync_session.execute(delete_query)
-#     sync_session.commit()  # Commit the changes to apply deletion
-# 
-#     # Step 2: Prepare the paginator after deletion
-#     paginator = TablePaginator(
-#         conn=sync_session, query="SELECT name FROM test_table", batch_size=2
-#     )
-# 
-#     # Step 3: Request the paginator to yield the pages (should yield nothing after deletion)
-#     for page in paginator.paginate():
-#         assert len(page) == 0  # Since we deleted all rows, the page should be empty
-# 
-#     populate_database(SYNC_DB_URL, DB_NAME)
-# 
-# def test_get_batch_query(sync_session_factory):
-#     session=sync_session_factory()
-# 
-#     # Prepare the paginator
-#     paginator = TablePaginator(
-#         conn=session,
-#         query="SELECT name FROM test_table",
-#         batch_size=2
-#     )
-# 
-#     # Test the get_batch_query method
-#     expected_query = "SELECT name FROM test_table LIMIT :limit OFFSET :offset"
-#     assert paginator._get_batch_query() == expected_query
-# 
-# 
-# @pytest.mark.asyncio
-# async def test_get_total_count_async(async_session_factory):
-#     async for async_session in async_session_factory:  # Use the session factory
-#         # Prepare the paginator
-#         paginator = TablePaginator(
-#             conn=async_session,
-#             query="SELECT name FROM test_table",
-#             batch_size=2
-#         )
-# 
-#         # Perform the total count query asynchronously
-#         total_count = await paginator._get_total_count_async()
-# 
-#         # Assertion to verify the result
-#         assert total_count == 4
+@pytest.mark.asyncio
+async def test_async_paginator(async_session_factory):
+    # Initialize paginator with a query
+    async for async_session in async_session_factory:
+        paginator = TablePaginator(
+            async_session, "SELECT name FROM public.test_table", batch_size=2
+        )
+
+        # Fetch and assert paginated results in batches
+        expected_batches = [
+            [('Alice', ), ('Bob', )],
+            [('Charlie', ), ('David', )]
+        ]
+
+        results = []
+        
+        async for batch in paginator.paginate():
+            results.append(batch)
+
+        # Assert total number of batches
+        assert len(results) == len(expected_batches)
+
+        # Assert each batch
+        for i, expected_batch in enumerate(expected_batches):
+            assert results[i] == expected_batch
+            
+        query_count=await paginator.get_total_count()
+        assert query_count == 4
+
+@pytest.mark.asyncio
+async def test_async_paginator_after_deleting_all_entries(async_session_factory):
+    # Initialize paginator with a query
+    async for async_session in async_session_factory:
+        # Step 1: Delete all entries from the table
+        delete_query = text("DELETE FROM test_table")
+        await async_session.execute(delete_query)
+        await async_session.commit()  # Commit the changes to apply deletion
+
+        # Step 2: Prepare the paginator after deletion
+        paginator = TablePaginator(
+            conn=async_session, query="SELECT * FROM test_table", batch_size=2
+        )
+
+        # Step 3: Request the paginator to yield the pages (should yield nothing after deletion)
+        async for page in paginator.paginate():
+            assert len(page) == 0  # Since we deleted all rows, the page should be empty
+
+
+@pytest.mark.asyncio
+async def test_paginator_with_params(async_session_factory):
+    async for async_session in async_session_factory:
+        paginator = TablePaginator(
+            async_session, "SELECT name FROM public.test_table WHERE name LIKE :name", 
+            params={'name': 'A%'}
+        )
+
+        # Fetch paginated results
+        results = []
+        for batch in paginator.paginate():
+            results.extend(batch)
+
+        assert len(results) == 1  # Only 'Alice' matches the condition
+        assert results[0] == ('Alice', )
+
+
+@pytest.mark.asyncio
+async def test_sync_paginator_batches(async_session_factory):
+    async for async_session in async_session_factory:
+        paginator = TablePaginator(
+            conn=session,
+            query="SELECT name FROM public.test_table",
+            batch_size=2
+        )
+
+        batches = []
+        for batch in paginator.paginate():
+            batches.append(batch)
+
+        assert len(batches) == 2  # Should have 2 batches of 2 records
+        assert batches[0] == [('Alice', ), ('Bob', )]
+        assert batches[1] == [('Charlie', ), ('David', )]
+
+
+@pytest.mark.asyncio
+async def test_get_total_count(async_session_factory):
+    # Use the session factory
+    async for async_session in async_session_factory:
+        # Prepare the paginator
+        paginator = TablePaginator(
+            conn=async_session,
+            query="SELECT name FROM test_table",
+            batch_size=2
+        )
+        
+        assert paginator.get_total_count() == 4
+
+
+@pytest.mark.asyncio
+async def test_generator_with_count(async_session_factory):
+    async for async_session in async_session_factory:  # Use the session factory
+        # Prepare the paginator
+        paginator = TablePaginator(
+            conn=async_session, query="SELECT name FROM test_table", batch_size=2
+        )
+        
+        batch = next(paginator._paginated_query_sync())
+        assert batch == [('Alice', ), ('Bob', )]
+        assert paginator.total_count == 4
+
+
+@pytest.mark.asyncio
+async def test_get_batch_query(async_session_factory):
+    async for async_session in async_session_factory:  # Use the session factory
+        # Prepare the paginator
+        paginator = TablePaginator(
+            conn=async_session, query="SELECT name FROM test_table", batch_size=2
+        )
+
+        # Test the get_batch_query method
+        expected_query = "SELECT name FROM test_table LIMIT :limit OFFSET :offset"
+        assert paginator._get_batch_query() == expected_query
+
+
+@pytest.mark.asyncio
+async def test_get_total_count_async(async_session_factory):
+    async for async_session in async_session_factory:  # Use the session factory
+        # Prepare the paginator
+        paginator = TablePaginator(
+            conn=async_session,
+            query="SELECT name FROM test_table",
+            batch_size=2
+        )
+
+        # Perform the total count query asynchronously
+        total_count = await paginator.get_total_count()
+
+        # Assertion to verify the result
+        assert total_count == 4
 
 
 def test_validate_sql_syntax_max_length():
