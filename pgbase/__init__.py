@@ -3,7 +3,7 @@ from .core import (
     DatasourceSettings, 
     AsyncDatabase, 
     Datasource, 
-    DataCluster
+    DataGrid,
 )  
 
 __all__ = [
@@ -11,5 +11,5 @@ __all__ = [
     'DatasourceSettings',
     'AsyncDatabase',
     'Datasource',
-    'DataCluster'
+    'DataGrid'
 ]

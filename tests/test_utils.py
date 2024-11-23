@@ -2,11 +2,16 @@ import pytest
 import asyncio
 from unittest.mock import patch
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 from pgbase.core import AsyncDatabase
 from pgbase.utils import (
     validate_postgresql_uri, 
     run_async_method, 
     mask_sensitive_data,
+    validate_schema_name,
+    is_valid_schema_name,
+    retry_async,
 )
 
 # Test valid URIs for psycopg
@@ -98,6 +103,54 @@ async def test_run_async_method_no_event_loop():
     result = await task
     
     assert result == 10
+
+
+# Test cases for is_valid_schema_name
+@pytest.mark.parametrize(
+    "schema_name,expected",
+    [
+        ("valid_schema", True),       # Valid schema name
+        ("_underscore_start", True), # Valid schema name starting with underscore
+        ("valid123", True),          # Valid schema name with numbers
+        ("123invalid", False),       # Invalid: starts with digit
+        ("invalid-schema", False),   # Invalid: contains hyphen
+        ("invalid schema", False),   # Invalid: contains space
+        ("", False),                 # Invalid: empty string
+        ("valid_schema_with_length_63_", True), # Valid schema with max length
+        ("1_invalid_start", False),  # Invalid: starts with a digit
+    ],
+)
+def test_is_valid_schema_name(schema_name, expected):
+    assert is_valid_schema_name(schema_name) == expected
+
+
+# Test cases for validate_schema_name
+@pytest.mark.parametrize(
+    "schema_name",
+    [
+        "valid_schema",
+        "_underscore_start",
+        "valid123",
+    ],
+)
+def test_validate_schema_name_valid(schema_name):
+    # Should not raise an exception for valid schema names
+    validate_schema_name(schema_name)
+
+
+@pytest.mark.parametrize(
+    "schema_name",
+    [
+        "123invalid",
+        "invalid-schema",
+        "invalid schema",
+        "",
+    ],
+)
+def test_validate_schema_name_invalid(schema_name):
+    # Should raise ValueError for invalid schema names
+    with pytest.raises(ValueError, match=r"Invalid schema name: .*"):
+        validate_schema_name(schema_name)
 
 
 def test_run_async_method_with_non_callable():
@@ -220,3 +273,117 @@ def test_no_username_or_password():
 def test_mask_sensitive_data(async_database: AsyncDatabase):
     masked_uri = mask_sensitive_data(async_database.uri)
     assert "***" in masked_uri, "Sensitive data should be masked."
+
+DELTA_TIME=0.01
+
+@pytest.mark.asyncio
+async def test_retry_async_success_first_attempt():
+    """Test when the action succeeds on the first attempt."""
+    mock_action = AsyncMock(return_value=True)
+    result = await retry_async(
+        action=mock_action,  # Simulated action
+        max_retries=3,
+        timeout=DELTA_TIME,  # Reduced timeout for testing
+        delay_factor=2,  # Reduced delay factor
+        max_delay=DELTA_TIME  # Reduced max delay
+    )
+    assert result is True
+    mock_action.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_retry_async_success_after_retries():
+    """Test when the action succeeds after a few retries."""
+    mock_action = AsyncMock(side_effect=[Exception("Fail"), Exception("Fail"), True])
+    result = await retry_async(
+        action=mock_action,  # Simulated action
+        max_retries=3,
+        timeout=DELTA_TIME,  # Reduced timeout for testing
+        delay_factor=2,  # Reduced delay factor
+        max_delay=DELTA_TIME # Reduced max delay
+    )
+    assert result is True
+    assert mock_action.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_retry_async_max_retries_exceeded():
+    """Test when the action fails and max retries are exceeded."""
+    mock_action = AsyncMock(side_effect=Exception("Fail"))
+    result = await retry_async(
+        action=mock_action,  # Simulated action
+        max_retries=3,
+        timeout=DELTA_TIME,  # Reduced timeout for testing
+        delay_factor=2,  # Reduced delay factor
+        max_delay=DELTA_TIME  # Reduced max delay
+    )
+    assert result is False
+    assert mock_action.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_retry_async_timeout_handling():
+    """Test when the action times out."""
+    mock_action = AsyncMock(side_effect=asyncio.TimeoutError("Timeout"))
+    result = await retry_async(
+        action=mock_action,  # Simulated action
+        max_retries=3,
+        timeout=DELTA_TIME,  # Reduced timeout for testing
+        delay_factor=2,  # Reduced delay factor
+        max_delay=DELTA_TIME  # Reduced max delay
+    )
+    assert result is False
+    assert mock_action.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_retry_async_exponential_backoff():
+    """Test that exponential backoff works as expected."""
+    mock_action = AsyncMock(side_effect=Exception("Fail"))
+    with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        await retry_async(
+            action=mock_action,     # Simulated action
+            max_retries=3,
+            timeout=DELTA_TIME,     # Reduced timeout for testing
+            delay_factor=2,         # Reduced delay factor
+            max_delay=DELTA_TIME,   # Reduced max delay
+            jitter=False
+        )
+        # Expected delays: x^1, x^2, x^3
+        expected_delays = [ DELTA_TIME, DELTA_TIME, DELTA_TIME ]
+        actual_delays = [call.args[0] for call in mock_sleep.await_args_list]
+        assert actual_delays == expected_delays
+    assert mock_action.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_retry_async_exponential_backoff_with_jitter():
+    """Test that exponential backoff with jitter works as expected."""
+    mock_action = AsyncMock(side_effect=Exception("Fail"))
+    with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        await retry_async(
+            action=mock_action,  # Simulated action
+            max_retries=3,
+            timeout=DELTA_TIME,  # Reduced timeout for testing
+            delay_factor=DELTA_TIME,  # Reduced delay factor
+            max_delay=DELTA_TIME,  # Reduced max delay
+            jitter=True
+        )
+        # Verify jitter introduces randomness
+        delays = [call.args[0] for call in mock_sleep.await_args_list]
+        assert all(0 < delay <= 1 for delay in delays)  # Delays should vary due to jitter
+
+
+@pytest.mark.asyncio
+async def test_retry_async_handles_other_exceptions():
+    """Test when the action raises a non-timeout exception."""
+    mock_action = AsyncMock(side_effect=ValueError("Random error"))
+    result = await retry_async(
+        action=mock_action,  # Simulated action
+        max_retries=3,
+        timeout=DELTA_TIME,  # Reduced timeout for testing
+        delay_factor=DELTA_TIME,  # Reduced delay factor
+        max_delay=DELTA_TIME  # Reduced max delay
+    )
+    assert result is False
+    assert mock_action.await_count == 3

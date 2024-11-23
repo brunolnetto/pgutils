@@ -953,7 +953,7 @@ class Datasource:
         return f'Datasource({self.databases.keys()})'
 
 
-class DataCluster:
+class DataGrid:
     """
     Manages multiple Datasource instances.
 
@@ -1024,4 +1024,4 @@ class DataCluster:
         await self._call_datasource_method_all('disconnect_all')
 
     def __repr__(self) -> str:
-        return f"<DataCluster(datasources={list(self.datasources.keys())})>"
+        return f"<DataGrid(datasources={list(self.datasources.keys())})>"

@@ -104,35 +104,52 @@ def construct_admin_uri(uri: AnyUrl, username: str, password: str) -> AnyUrl:
     return construct_uri('postgresql+psycopg2', username, password, uri.host, uri.port, '')
 
 
+def get_jitter(attempt: int, has_jitter: bool, delay_factor: float, max_delay: float) -> float:
+    rand_value=uniform(0, 1) if has_jitter else 0
+    return min(delay_factor ** attempt + rand_value, max_delay)
+
+
 async def retry_async(
-    action: Callable[[], asyncio.Future], 
-    max_retries: int = 3, 
-    timeout: Optional[int] = DEFAULT_RETRY_TIMEOUT_S, 
+    action: Callable[[], asyncio.Future],
+    max_retries: int = 3,
+    timeout: Optional[int] = DEFAULT_RETRY_TIMEOUT_S,
     delay_factor: float = 2.0,
     max_delay: Optional[int] = DEFAULT_RETRY_TIMEOUT_S,
-    jitter: bool = True
+    jitter: bool = True,
+    logger: Optional[logging.Logger] = None
 ) -> bool:
-    """Retries an asynchronous action with exponential backoff and optional jitter."""
+    """
+    Retries an asynchronous action with exponential backoff and optional jitter.
+    Parameters:
+        - action: The asynchronous function to execute.
+        - max_retries: Maximum number of retry attempts.
+        - timeout: Maximum time in seconds to wait for the action to complete.
+        - delay_factor: Factor to increase the delay between retries.
+        - max_delay: Maximum delay between retries.
+        - jitter: Whether to add random jitter to the delay.
+        - logger: Logger instance for logging messages.
+    Returns:
+        - The result of the action if successful, or False if all retries fail.
+    """ 
+    if logger is None:
+        logger = logging.getLogger("retry_async")
+
     attempt = 0
     while attempt < max_retries:
         attempt += 1
         try:
-            # Execute the action
             result = await asyncio.wait_for(action(), timeout=timeout)
+            logger.info(f"Action succeeded on attempt {attempt}")
             return result
-
         except Exception as e:
-            # Log the error based on the exception
-            # This allows flexibility in handling different types of exceptions
             if isinstance(e, asyncio.TimeoutError):
-                message = f"Timeout on attempt {attempt}: {str(e)}"
+                logger.warning(f"Timeout on attempt {attempt}: {str(e)}")
             else:
-                message = f"Error on attempt {attempt}: {str(e)}"
-            print(message)  # Use logging in production code
+                logger.error(f"Error on attempt {attempt}: {str(e)}")
 
-        # Exponential backoff with jitter
-        wait_time = min(delay_factor ** attempt + (random.uniform(0, 1) if jitter else 0), max_delay)
-        print(f"Retrying in {wait_time:.2f} seconds...")
+        wait_time = get_jitter(attempt, jitter, delay_factor, max_delay)
+        logger.info(f"Retrying in {wait_time:.2f} seconds...")
         await asyncio.sleep(wait_time)
 
+    logger.error("All retry attempts failed.")
     return False

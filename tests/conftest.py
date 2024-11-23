@@ -232,8 +232,8 @@ def create_mocked_datasource():
     return datasource
 
 
-def create_mocked_data_cluster():
-    """Create a mocked DataCluster instance using factories."""
+def create_mocked_data_grid():
+    """Create a mocked DataGrid instance using factories."""
     # Generate DatasourceSettings using the factory
     datasource_settings: Dict[
         str, DatasourceSettingsFactory
@@ -245,11 +245,11 @@ def create_mocked_data_cluster():
     # Create a mock logger
     mock_logger = LoggerMock()
 
-    # Create the DataCluster instance with the generated datasource settings
-    data_cluster = DataCluster(datasource_settings, mock_logger)
+    # Create the DataGrid instance with the generated datasource settings
+    data_grid = DataGrid(datasource_settings, mock_logger)
 
-    # Mock the datasources within the DataCluster
-    data_cluster.datasources = {
+    # Mock the datasources within the DataGrid
+    data_grid.datasources = {
         ds.name: MagicMock(
             spec=DatasourceSettings, 
             name=ds.name
@@ -257,11 +257,11 @@ def create_mocked_data_cluster():
     }
 
     # Mock methods for each datasource
-    for ds in data_cluster.datasources.values():
+    for ds in data_grid.datasources.values():
         ds.disconnect_all = MagicMock()
         ds.create_tables_all = MagicMock()
 
-    return data_cluster
+    return data_grid
 
 
 @pytest.fixture
@@ -271,10 +271,101 @@ def datasource_settings_factory():
 
 
 @pytest.fixture(scope="function")
-def mock_data_cluster(datasource_settings_factory, mock_logger):
-    """Fixture to create a DataCluster instance for tests."""
+def mock_data_grid(datasource_settings_factory, mock_logger):
+    """Fixture to create a DataGrid instance for tests."""
     settings_dict = {
         "ds1": datasource_settings_factory(name="ds1"),
         "ds2": datasource_settings_factory(name="ds2"),
     }
-    return DataCluster(settings_dict, logger=mock_logger)
+    return DataGrid(settings_dict, logger=mock_logger)
+
+
+class TestDatabase(BaseDatabase):
+    def _create_engine(self):
+        return "test_engine"
+
+    def _create_admin_engine(self):
+        return "test_admin_engine"
+
+    def _create_sessionmaker(self):
+        return "test_sessionmaker"
+
+    def get_session(self):
+        return "test_session"
+
+    def create_database_if_not_exists(self, db_name: str = None):
+        return f"Database {db_name or self.settings.database} created."
+
+    def drop_database_if_exists(self, db_name: str = None):
+        return f"Database {db_name or self.settings.database} dropped."
+
+    def check_database_exists(self, db_name: str = None) -> bool:
+        return True
+
+    def column_exists(self, schema_name: str, table_name: str, column_name: str) -> bool:
+        return True
+
+    def create_indexes(self, indexes: List[ColumnIndex]):
+        return "Indexes created."
+
+    def schema_exists(self, schema_name):
+        return True
+
+    def health_check(self, use_admin_uri=False, timeout=10, max_retries=3) -> bool:
+        return True
+
+    def execute(self, query: str, params: dict = None):
+        return "Query executed."
+
+    async def list_tables(self, schema_name: str = 'public'):
+        return ["table1", "table2"]
+
+    async def list_schemas(self):
+        return ["schema1", "schema2"]
+
+    async def list_indexes(self, table_name: str):
+        return ["index1", "index2"]
+
+    async def list_views(self, table_schema='public'):
+        return ["view1", "view2"]
+
+    async def list_sequences(self):
+        return ["sequence1", "sequence2"]
+
+    async def list_constraints(self, table_name: str, table_schema: str = 'public'):
+        return ["constraint1", "constraint2"]
+
+    async def list_triggers(self, table_name: str):
+        return ["trigger1", "trigger2"]
+
+    async def list_functions(self):
+        return ["function1", "function2"]
+
+    async def list_procedures(self):
+        return ["procedure1", "procedure2"]
+
+    async def list_materialized_views(self):
+        return ["materialized_view1", "materialized_view2"]
+
+    async def list_columns(self, table_name: str, table_schema: str = 'public'):
+        return ["column1", "column2"]
+
+    async def list_types(self):
+        return ["type1", "type2"]
+
+    async def list_roles(self):
+        return ["role1", "role2"]
+
+    async def list_extensions(self) -> list:
+        return ["extension1", "extension2"]
+
+@pytest.fixture
+def database_settings():
+    return DatabaseSettings(
+        uri="postgresql://user:password@localhost:5432/testdb",
+        admin_username = "admin", admin_password = "password"
+    )
+
+@pytest.fixture
+def test_db(database_settings):
+    return TestDatabase(settings=database_settings, logger=MagicMock())

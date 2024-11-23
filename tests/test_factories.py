@@ -5,7 +5,7 @@ from pydantic.networks import AnyUrl
 from .conftest import (
     DatasourceSettingsFactory, 
     DatabaseSettingsFactory,
-    create_mocked_data_cluster
+    create_mocked_data_grid
 )
 
 def test_database_settings_factory():
@@ -51,17 +51,16 @@ def test_database_settings_factory_validation():
         DatabaseSettingsFactory(uri="invalid_uri")
 
 
-def test_mocked_data_cluster():
-    """Test that the mocked DataCluster behaves as expected."""
-    data_cluster = create_mocked_data_cluster()
+def test_mocked_data_grid():
+    """Test that the mocked DataGrid behaves as expected."""
+    data_grid = create_mocked_data_grid()
 
-    # Check that the DataCluster has been initialized correctly
-    assert len(data_cluster.datasources) == 2  # Ensure there are 2 datasources
+    # Check that the DataGrid has been initialized correctly
+    assert len(data_grid.datasources) == 2  # Ensure there are 2 datasources
 
     # Check that the disconnect_all method can be called
-    data_cluster.datasources['ds1'].disconnect_all()
-    data_cluster.datasources['ds2'].disconnect_all()
-
-    data_cluster.datasources['ds1'].disconnect_all.assert_called_once()
-    data_cluster.datasources['ds2'].disconnect_all.assert_called_once()
+    data_grid.datasources['ds1'].disconnect_all()
+    data_grid.datasources['ds2'].disconnect_all()
+    data_grid.datasources['ds1'].disconnect_all.assert_called_once()
+    data_grid.datasources['ds2'].disconnect_all.assert_called_once()
 

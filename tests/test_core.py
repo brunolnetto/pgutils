@@ -1,17 +1,16 @@
 import pytest
 from pydantic import ValidationError
 from typing import Dict
+import asyncio
+import random
+import pytest
 
 from sqlalchemy import Column, Integer, String
+from unittest.mock import MagicMock, patch
 
-from pgbase.core import AsyncDatabase, Datasource, DataCluster
-
-from pgbase.models import (
-    DatabaseSettings, 
-    DatasourceSettings, 
-    TableConstraint, 
-    ColumnIndex
-)
+from pgbase.core import AsyncDatabase, Datasource, DataGrid
+from pgbase.models import DatabaseSettings, DatasourceSettings, TableConstraint, ColumnIndex
+from pgbase.utils import mask_sensitive_data
 
 from .conftest import DatasourceSettingsFactory, DEFAULT_PORT
 
@@ -430,61 +429,94 @@ def test_datasource_settings_representation(datasource_settings: DatasourceSetti
     assert datasource_settings.__repr__() == datasource_repr
 
 
-def test_initialization(mock_data_cluster, mock_logger):
-    """Test that DataCluster initializes correctly with valid settings."""
-    assert len(mock_data_cluster.datasources) == 2
-    assert "ds1" in mock_data_cluster.datasources
-    assert "ds2" in mock_data_cluster.datasources
+def test_initialization(mock_data_grid, mock_logger):
+    """Test that DataGrid initializes correctly with valid settings."""
+    assert len(mock_data_grid.datasources) == 2
+    assert "ds1" in mock_data_grid.datasources
+    assert "ds2" in mock_data_grid.datasources
     mock_logger.info.assert_called()
 
 
-def test_get_datasource(mock_data_cluster):
+def test_get_datasource(mock_data_grid):
     """Test that get_datasource returns the correct instance."""
-    datasource = mock_data_cluster.get_datasource("ds1")
+    datasource = mock_data_grid.get_datasource("ds1")
     assert datasource.name == "ds1"
 
 
-def test_datacluster_repr(mock_data_cluster):
+def test_datagrid_repr(mock_data_grid):
     """Test that get_datasource returns the correct instance."""
-    expected="<DataCluster(datasources=['ds1', 'ds2'])>"
-    assert mock_data_cluster.__repr__() == expected
+    expected="<DataGrid(datasources=['ds1', 'ds2'])>"
+    assert mock_data_grid.__repr__() == expected
 
 
-def test_get_datasource_not_found(mock_data_cluster):
+def test_get_datasource_not_found(mock_data_grid):
     """Test that get_datasource raises KeyError for non-existent datasource."""
     with pytest.raises(KeyError, match="Datasource 'unknown' not found."):
-        mock_data_cluster.get_datasource("unknown")
+        mock_data_grid.get_datasource("unknown")
 
 
 @pytest.mark.asyncio
-async def test_health_check_all(mock_data_cluster, mock_datasource):
+async def test_health_check_all(mock_data_grid, mock_datasource):
     """Test health check for all datasources."""
     mock_datasource.health_check_all.return_value = {"db1": True, "db2": True}
-    mock_data_cluster.datasources["ds1"] = mock_datasource
-    mock_data_cluster.datasources["ds2"] = mock_datasource
+    mock_data_grid.datasources["ds1"] = mock_datasource
+    mock_data_grid.datasources["ds2"] = mock_datasource
 
-    results = await mock_data_cluster.health_check_all()
+    results = await mock_data_grid.health_check_all()
 
     assert results["ds1"] == {"db1": True, "db2": True}
     assert results["ds2"] == {"db1": True, "db2": True}
 
 
 @pytest.mark.asyncio
-async def test_health_check_all_error(mock_data_cluster, mock_datasource, mock_logger):
+async def test_health_check_all_error(mock_data_grid, mock_datasource, mock_logger):
     """Test health check logs errors on failure."""
     mock_datasource.health_check_all.side_effect = Exception("Health check failed")
-    mock_data_cluster.datasources["ds1"] = mock_datasource
+    mock_data_grid.datasources["ds1"] = mock_datasource
 
-    results = await mock_data_cluster.health_check_all()
+    results = await mock_data_grid.health_check_all()
 
     assert results["ds1"] == {'error': 'Health check failed'}
     assert "Health check failed" in str(mock_logger.error.call_args)
 
 
 @pytest.mark.asyncio
-async def test_disconnect_all(mock_data_cluster, mock_datasource):
+async def test_disconnect_all(mock_data_grid, mock_datasource):
     """Test disconnect_all method."""
-    mock_data_cluster.datasources["ds1"] = mock_datasource
-    await mock_data_cluster.disconnect_all()
-
+    mock_data_grid.datasources["ds1"] = mock_datasource
+    await mock_data_grid.disconnect_all()
     mock_datasource.disconnect_all.assert_called()
+
+
+def test_create_database_if_not_exists(test_db):
+    result = test_db.create_database_if_not_exists("test_db")
+    assert result == "Database test_db created."
+
+
+def test_check_database_exists(test_db):
+    assert test_db.check_database_exists("test_db") is True
+
+
+def test_execute(test_db):
+    result = test_db.execute("SELECT 1;")
+    assert result == "Query executed."
+
+
+@pytest.mark.asyncio
+async def test_list_tables(test_db):
+    result = await test_db.list_tables()
+    assert result == ["table1", "table2"]
+
+
+@pytest.mark.asyncio
+async def test_list_extensions(test_db):
+    result = await test_db.list_extensions()
+    assert result == ["extension1", "extension2"]
+
+
+def test_database_repr(test_db):
+    db_repr = test_db.__repr__()
+    masked_credentials=mask_sensitive_data(test_db.uri)
+    assert db_repr == f"<Database(uri={masked_credentials})>"
+
+

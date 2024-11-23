@@ -7,7 +7,7 @@ from pgbase.models import (
     DatabaseSettings, ColumnIndex, QueryValidator, 
     QueryValidationError, ExcessiveSelectWarning,
 )
-from pgbase.constants import DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD
+from pgbase.models import DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD
 
 
 def test_database_config_valid():
