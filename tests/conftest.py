@@ -10,11 +10,12 @@ from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, AsyncSession
 
-from pgbase.core import AsyncDatabase, Datasource, DataCluster
-from pgbase.models import DatabaseSettings, DatasourceSettings
+from pgbase.base import BaseDatabase
+from pgbase.core import AsyncDatabase, Datasource, DataGrid
+from pgbase.models import DatabaseSettings, DatasourceSettings, ColumnIndex
 from tests.testing import prepare_database
 
-DEFAULT_PORT=5433
+DEFAULT_PORT=5432
 
 # Database configuration constants
 DB_NAME = "mydb"
@@ -46,13 +47,11 @@ def databases_settings():
             "uri": f"postgresql+psycopg://postgres:postgres@localhost:{DEFAULT_PORT}/db1",
             "admin_username": "postgres",
             "admin_password": "postgres",
-            "async_mode": False
         },
         "db2": {
             "uri": f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}/db2",
             "admin_username": "postgres",
             "admin_password": "postgres",
-            "async_mode": True
         }
     }
     

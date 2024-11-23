@@ -47,19 +47,13 @@ class AsyncDatabase(BaseDatabase):
         "SELECT", "INSERT", "DELETE", "UPDATE", "DROP", "CREATE", "FROM", "WHERE", "JOIN", "TABLE", "INDEX"
     }
 
-
     # Constants for dynamic batch size adjustment
     MIN_BATCH_SIZE = 1
     MAX_BATCH_SIZE = 10
     LOAD_THRESHOLD = 0.75
 
-
     def __init__(self, settings: DatabaseSettings, logger: Logger = None):
-        self.settings = settings
-        self.uri = make_url(str(settings.complete_uri))
-        self.admin_uri = settings.admin_uri
-        self.base = declarative_base(metadata=MetaData())
-        self.logger = logger or getLogger(__name__)
+        super().__init__(settings, logger)
 
         # Create engines and sessionmakers
         self.admin_engine = self._create_admin_engine()
