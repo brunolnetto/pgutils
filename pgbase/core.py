@@ -27,7 +27,7 @@ from .models import (
 from .utils import (
     mask_sensitive_data, validate_schema_name, retry_async
 )
-from .constants import PAGINATION_BATCH_SIZE, DEFAULT_HEALTHCHECK_TIMEOUT_S, MAX_RETRIES
+from .constants import PAGINATION_BATCH_SIZE
 from .models import DatabaseConnection
 from .base import BaseDatabase
 
@@ -445,12 +445,7 @@ class AsyncDatabase(BaseDatabase):
         return replication_connections > 0
 
 
-    async def health_check(
-        self, 
-        use_admin_uri: bool = False, 
-        timeout: Optional[int] = DEFAULT_HEALTHCHECK_TIMEOUT_S, 
-        max_retries: int = MAX_RETRIES
-    ) -> bool:
+    async def health_check(self, use_admin_uri: bool = False) -> bool:
         """Performs a health check on the database connection with retries."""
 
         # Define the health check action to be retried
@@ -472,7 +467,7 @@ class AsyncDatabase(BaseDatabase):
                 return False
 
         # Call the retry_async function for retry logic
-        return await retry_async(action, max_retries=max_retries, timeout=timeout)
+        return await retry_async(action)
 
 
     async def create_tables(self):

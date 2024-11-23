@@ -23,24 +23,29 @@ from .utils import (
 )
 from .constants import (
     PAGINATION_BATCH_SIZE,
-    DEFAULT_POOL_SIZE,
-    DEFAULT_MAX_OVERFLOW,
-    DEFAULT_ADMIN_USERNAME,
-    DEFAULT_ADMIN_PASSWORD,
-    NOT_EMPTY_STR_COUNT,
-    DEFAULT_MINIMUM_PASSWORD_SIZE,
-    VALID_SCHEMES,
+    DEFAULT_HEALTHCHECK_TIMEOUT_S,
     VALID_INDEX_TYPES,
+    VALID_SCHEMES,
 )
 
-# Types
+# Model types
 AsyncPageGenerator = AsyncGenerator[List[Any], None] 
 SyncPageGenerator = Generator[List[Any], None, None]
 PageGenerator = Union[AsyncPageGenerator, SyncPageGenerator]
 AsyncDatabaseInteraction=(AsyncConnection, AsyncSession)
 DatabaseConnection = Union[Session, AsyncSession, Connection, AsyncConnection]
 
-# Models
+# Models constants
+DEFAULT_ADMIN_USERNAME='postgres'
+DEFAULT_ADMIN_PASSWORD='postgres'
+
+DEFAULT_POOL_SIZE = 20
+DEFAULT_MAX_OVERFLOW = 10
+
+DEFAULT_MIN_LENGTH = 1
+DEFAULT_MINIMUM_PASSWORD_SIZE = 1
+
+
 class QueryValidationError(Exception):
     """Exception for invalid queries."""
     pass
@@ -54,12 +59,10 @@ class ExcessiveSelectWarning(Warning):
 class DatabaseSettings(BaseModel):
     uri: AnyUrl
     admin_username: str = Field(
-        default=DEFAULT_ADMIN_USERNAME, 
-        min_length=NOT_EMPTY_STR_COUNT
+        default=DEFAULT_ADMIN_USERNAME, min_length=DEFAULT_MIN_LENGTH
     )
     admin_password: str = Field(
-        default=DEFAULT_ADMIN_PASSWORD, 
-        min_length=DEFAULT_MINIMUM_PASSWORD_SIZE
+        default=DEFAULT_ADMIN_PASSWORD, min_length=DEFAULT_MINIMUM_PASSWORD_SIZE
     )
     default_port: int = 5432
     pool_size: int = Field(default=DEFAULT_POOL_SIZE, gt=0)
@@ -99,7 +102,7 @@ class DatasourceSettings(BaseModel):
     """Configuration settings for a DataSource."""
     name: str
     admin_username: str = Field(
-        default=DEFAULT_ADMIN_USERNAME, min_length=NOT_EMPTY_STR_COUNT
+        default=DEFAULT_ADMIN_USERNAME, min_length=DEFAULT_MIN_LENGTH
     )
     admin_password: str = Field(
         default=DEFAULT_ADMIN_PASSWORD,  min_length=DEFAULT_MINIMUM_PASSWORD_SIZE

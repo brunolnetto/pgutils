@@ -1,12 +1,22 @@
 from typing import Any, Callable, Optional
 from pydantic import AnyUrl
 import asyncio
-import random
+from random import uniform
+import logging
 import re
 
 from sqlalchemy.engine.url import make_url, URL
 
-from .constants import VALID_SCHEMES, VALID_SYNC_SCHEMES, DEFAULT_RETRY_TIMEOUT_S
+from .constants import (
+    VALID_SCHEMES, 
+    VALID_SYNC_SCHEMES, 
+)
+
+
+# Utils constants
+MAX_RETRIES = 3
+DEFAULT_RETRY_TIMEOUT_S = 5
+DEFAULT_DELAY_FACTOR = 2.0
 
 
 def validate_postgresql_uri(uri: str, allow_async: bool = False):
