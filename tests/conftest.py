@@ -103,8 +103,8 @@ def datasource_settings(databases_settings: Dict[str, DatabaseSettings]):
     # Create the DatasourceSettings fixture
     return DatasourceSettings(
         name="Datasource object",
-        databases=list(databases_settings.values()),
-        description="Datasource with both sync and async databases"
+        description="Datasource with both sync and async databases",
+        databases=list(databases_settings.values())
     )
 
 
@@ -292,13 +292,13 @@ class TestDatabase(BaseDatabase):
     def get_session(self):
         return "test_session"
 
-    def create_database_if_not_exists(self, db_name: str = None):
+    def create_database(self, db_name: str = None):
         return f"Database {db_name or self.settings.database} created."
 
-    def drop_database_if_exists(self, db_name: str = None):
+    def drop_database(self, db_name: str = None):
         return f"Database {db_name or self.settings.database} dropped."
 
-    def check_database_exists(self, db_name: str = None) -> bool:
+    def database_exists(self, db_name: str = None) -> bool:
         return True
 
     def column_exists(self, schema_name: str, table_name: str, column_name: str) -> bool:

@@ -481,6 +481,14 @@ async def test_health_check_all_error(mock_data_grid, mock_datasource, mock_logg
 
 
 @pytest.mark.asyncio
+async def test_create_tables_all(mock_data_grid, mock_datasource):
+    """Test disconnect_all method."""
+    mock_data_grid.datasources["ds1"] = mock_datasource
+    await mock_data_grid.create_tables_all()
+    mock_datasource.create_tables_all.assert_called()
+
+
+@pytest.mark.asyncio
 async def test_disconnect_all(mock_data_grid, mock_datasource):
     """Test disconnect_all method."""
     mock_data_grid.datasources["ds1"] = mock_datasource
@@ -489,12 +497,12 @@ async def test_disconnect_all(mock_data_grid, mock_datasource):
 
 
 def test_create_database_if_not_exists(test_db):
-    result = test_db.create_database_if_not_exists("test_db")
+    result = test_db.create_database("test_db")
     assert result == "Database test_db created."
 
 
 def test_check_database_exists(test_db):
-    assert test_db.check_database_exists("test_db") is True
+    assert test_db.database_exists("test_db") is True
 
 
 def test_execute(test_db):

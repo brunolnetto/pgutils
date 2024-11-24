@@ -6,11 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from pgbase.core import AsyncDatabase
 from pgbase.utils import (
-    validate_postgresql_uri, 
-    run_async_method, 
+    validate_postgresql_uri,  
     mask_sensitive_data,
-    validate_schema_name,
-    is_valid_schema_name,
+    validate_entity_name,
+    is_entity_name_valid,
     retry_async,
 )
 
@@ -92,19 +91,6 @@ def test_invalid_uris(invalid_uri):
         validate_postgresql_uri(invalid_uri)
 
 
-@pytest.mark.asyncio
-async def test_run_async_method_no_event_loop():
-    """Test running an async method with no current event loop."""
-    async def sample_async_method(x):
-        return x * 2
-
-    task = run_async_method(sample_async_method, 5)
-    
-    result = await task
-    
-    assert result == 10
-
-
 # Test cases for is_valid_schema_name
 @pytest.mark.parametrize(
     "schema_name,expected",
@@ -121,7 +107,7 @@ async def test_run_async_method_no_event_loop():
     ],
 )
 def test_is_valid_schema_name(schema_name, expected):
-    assert is_valid_schema_name(schema_name) == expected
+    assert is_entity_name_valid(schema_name, 'schema') == expected
 
 
 # Test cases for validate_schema_name
@@ -133,9 +119,9 @@ def test_is_valid_schema_name(schema_name, expected):
         "valid123",
     ],
 )
-def test_validate_schema_name_valid(schema_name):
+def test_validate_entity_name_valid(schema_name):
     # Should not raise an exception for valid schema names
-    validate_schema_name(schema_name)
+    validate_entity_name(schema_name, 'schema')
 
 
 @pytest.mark.parametrize(
@@ -150,92 +136,7 @@ def test_validate_schema_name_valid(schema_name):
 def test_validate_schema_name_invalid(schema_name):
     # Should raise ValueError for invalid schema names
     with pytest.raises(ValueError, match=r"Invalid schema name: .*"):
-        validate_schema_name(schema_name)
-
-
-def test_run_async_method_with_non_callable():
-    """Test running an async method with no current event loop."""
-    with pytest.raises(ValueError):
-        run_async_method('not_callable', 5)
-
-
-@pytest.mark.asyncio
-async def test_run_async_method_with_running_event_loop():
-    """Test running an async method with an existing running event loop."""
-    async def sample_async_method(x):
-        return x * 2
-
-    # Manually create and run the event loop
-    asyncio.get_event_loop()
-    task = run_async_method(sample_async_method, 5)
-    result = await task
-    assert result == 10
-
-
-@pytest.mark.asyncio
-async def test_run_async_method_with_non_async_function():
-    """Test calling a synchronous function using run_async_method."""
-    async def sample_sync_function(x):
-        return x * 2
-
-    task = run_async_method(sample_sync_function, 5)
-    
-    # Await the task to get the result
-    result = await task
-    
-    assert result == 10
-
-
-@pytest.mark.asyncio
-async def test_run_async_method_with_exception():
-    """Test running an async method that raises an exception."""
-    async def sample_async_method():
-        raise ValueError("An error occurred")
-
-    with pytest.raises(ValueError, match="An error occurred"):
-        task = run_async_method(sample_async_method)
-        await task
-
-
-@pytest.mark.asyncio
-async def test_run_async_method_with_kwargs():
-    """Test running an async method with keyword arguments."""
-    async def sample_async_method(x, y):
-        return x + y
-
-    task = run_async_method(sample_async_method, 3, y=7)
-    
-    # Await the task to get the result
-    result = await task
-
-    assert result == 10
-
-
-def test_run_async_method_no_event_loop():
-    """Test that a new event loop is created when there is no current loop."""
-    async def sample_async_method():
-        return 42
-
-    with patch('asyncio.get_event_loop', side_effect=RuntimeError("No current event loop")):
-        result = run_async_method(sample_async_method)
-        assert result == 42  # Check if the result is as expected
-
-
-@pytest.mark.asyncio
-async def test_run_async_method_running_loop():
-    async def sample_async_method(x):
-        return x * 2
-    
-    result = await run_async_method(sample_async_method, 5)
-    assert result == 10
-
-
-def test_run_async_method_no_loop():
-    async def sample_async_method(x):
-        return x * 2
-    
-    result = run_async_method(sample_async_method, 5)
-    assert result == 10
+        validate_entity_name(schema_name, 'schema')
 
 
 def test_missing_username():
@@ -274,6 +175,7 @@ def test_mask_sensitive_data(async_database: AsyncDatabase):
     masked_uri = mask_sensitive_data(async_database.uri)
     assert "***" in masked_uri, "Sensitive data should be masked."
 
+# Small retry timeout
 DELTA_TIME=0.01
 
 @pytest.mark.asyncio
@@ -340,7 +242,7 @@ async def test_retry_async_timeout_handling():
 async def test_retry_async_exponential_backoff():
     """Test that exponential backoff works as expected."""
     mock_action = AsyncMock(side_effect=Exception("Fail"))
-    with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+    with patch("pgbase.utils.sleep", new_callable=AsyncMock) as mock_sleep:
         await retry_async(
             action=mock_action,     # Simulated action
             max_retries=3,

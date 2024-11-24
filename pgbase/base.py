@@ -57,17 +57,17 @@ class BaseDatabase(ABC):
         pass
 
     @abstractmethod
-    def create_database_if_not_exists(self, db_name: str = None):
+    def create_database(self, db_name: str = None):
         """Creates the database if it doesn't exist."""
         pass
 
     @abstractmethod
-    def drop_database_if_exists(self, db_name: str = None):
+    def drop_database(self, db_name: str = None):
         """Drops the database if it exists."""
         pass
 
     @abstractmethod
-    def check_database_exists(self, db_name: str = None) -> bool:
+    def database_exists(self, db_name: str = None) -> bool:
         """Checks if the database exists."""
         pass
 

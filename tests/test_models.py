@@ -4,7 +4,7 @@ from pydantic import ValidationError
 from sqlalchemy import text
 
 from pgbase.models import (
-    DatabaseSettings, ColumnIndex, QueryValidator, 
+    DatabaseSettings, DatasourceSettings, ColumnIndex, QueryValidator, 
     QueryValidationError, ExcessiveSelectWarning,
 )
 from pgbase.models import (
@@ -67,6 +67,12 @@ def test_database_config_invalid_pool_size():
         )
 
     assert 'should be greater than 0' in str(excinfo.value)
+
+def test_empty_datasource_settings():
+    with pytest.raises(ValidationError) as excinfo:
+        DatasourceSettings(name='invalid datasource')
+
+    assert 'Field required' in str(excinfo.value)
 
 
 def test_valid_index_btree():

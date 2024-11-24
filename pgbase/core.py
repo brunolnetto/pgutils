@@ -34,23 +34,16 @@ from .base import BaseDatabase
 class SyncDatabase(BaseDatabase):
     pass
 
+# Constants for dynamic batch size adjustment
+MIN_BATCH_SIZE = 1
+MAX_BATCH_SIZE = 10
+LOAD_THRESHOLD = 0.75
+
 class AsyncDatabase(BaseDatabase):
     """
     Database class for managing PostgreSQL connections and operations.
     Supports both synchronous and asynchronous operations.
     """
-    # Caching for index existence and column existence checks
-    index_cache = {}
-    column_cache = {}
-
-    RESERVED_KEYWORDS = {
-        "SELECT", "INSERT", "DELETE", "UPDATE", "DROP", "CREATE", "FROM", "WHERE", "JOIN", "TABLE", "INDEX"
-    }
-
-    # Constants for dynamic batch size adjustment
-    MIN_BATCH_SIZE = 1
-    MAX_BATCH_SIZE = 10
-    LOAD_THRESHOLD = 0.75
 
     def __init__(self, settings: DatabaseSettings, logger: Logger = None):
         super().__init__(settings, logger)
@@ -66,9 +59,45 @@ class AsyncDatabase(BaseDatabase):
         self.indexes_lock = Lock()
         self.pool = None
 
+        self.active_queries = {}
+
     async def init(self):
-        await self.init_pool()
-        await self.create_database_if_not_exists(self.settings.name)                 
+        await self.__init_pool()
+        await self.create_database(self.settings.name)
+
+    async def __init_pool(self):
+        """
+        Initializes the connection pool for the PostgreSQL database.
+        """
+        try:
+            # Create a connection pool for the database
+            credentials=f"{self.uri.username}:{self.uri.password}"
+            route=f"{self.uri.host}:{self.uri.port}/{self.uri.database}"
+            dsn = f"postgresql://{credentials}@{route}"
+            self.pool = await create_pool(
+                dsn=dsn,
+                min_size=1,                             # Minimum number of connections in the pool
+                max_size=self.settings.pool_size,       # Maximum number of connections in the pool
+                max_inactive_connection_lifetime=300,   # Close inactive connections after 5 minutes
+            )
+            self.logger.info("Database connection pool initialized.")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize database pool: {e}")
+
+
+    @asynccontextmanager
+    async def _acquire_connection(self):
+        """
+        Acquires a connection from the pool.
+        
+        Returns:
+            asyncpg.Connection: A database connection object.
+        """
+        if self.pool is None:
+            await self.__init_pool()
+
+        async with self.pool.acquire() as connection:
+            yield connection
 
     def _create_engine(self):
         """Creates and returns the main async database engine."""
@@ -109,146 +138,88 @@ class AsyncDatabase(BaseDatabase):
             finally:
                 await session.close()
 
-    async def init_pool(self):
-        """
-        Initializes the connection pool for the PostgreSQL database.
-        """
-        try:
-            # Create a connection pool for the database
-            credentials=f"{self.uri.username}:{self.uri.password}"
-            route=f"{self.uri.host}:{self.uri.port}/{self.uri.database}"
-            dsn = f"postgresql://{credentials}@{route}"
-            self.pool = await create_pool(
-                dsn=dsn,
-                min_size=1,                             # Minimum number of connections in the pool
-                max_size=self.settings.pool_size,       # Maximum number of connections in the pool
-                max_inactive_connection_lifetime=300,   # Close inactive connections after 5 minutes
-            )
-            self.logger.info("Database connection pool initialized.")
-        except Exception as e:
-            self.logger.error(f"Failed to initialize database pool: {e}")
 
-
-
-    async def close_pool(self):
-        """
-        Closes the connection pool when the application shuts down.
-        """
-        if self.pool:
-            await self.pool.close()
-            self.logger.info("Database connection pool closed.")
-
-
-    @asynccontextmanager
-    async def _acquire_connection(self):
-        """
-        Acquires a connection from the pool.
-        
-        Returns:
-            asyncpg.Connection: A database connection object.
-        """
-        if self.pool is None:
-            await self.init_pool()
-        async with self.pool.acquire() as connection:
-            yield connection
-
-
-    def _is_valid_table_name(self, table_name: str) -> bool:
-        """Validate table name against SQL injection, reserved keywords, and special characters."""
-        # Ensure it is not empty or just spaces
-        if not table_name.strip():
-            self.logger.warning(f"Invalid table name attempted: '{table_name}' (empty or whitespace)")
-            return False
-
-        # Ensure it starts with a letter or underscore and only contains valid characters
-        pattern = r"^[a-zA-Z_][a-zA-Z0-9_]*$"
-        is_valid = match(pattern, table_name) is not None
-
-        upper_table_name = table_name.upper()
-
-        # Check if table name is exactly a reserved keyword
-        if is_valid:
-            if upper_table_name in self.RESERVED_KEYWORDS:
-                self.logger.warning(f"Invalid table name attempted: '{table_name}' (reserved keyword)")
-                is_valid = False
-
-        # Ensure the name is not composed entirely of special characters
-        valid_table_pattern=r"^[^a-zA-Z0-9]+$"
-        if is_valid and match(valid_table_pattern, table_name):
-            self.logger.warning(f"Invalid table name attempted: '{table_name}' (special characters only)")
-            is_valid = False
-
-        # Log detailed reasons for failure
-        if not is_valid:
-            if not table_name.strip():
-                self.logger.warning(f"Invalid table name attempted: '{table_name}' (empty or whitespace)")
-            elif match(valid_table_pattern, table_name):
-                self.logger.warning(f"Invalid table name attempted: '{table_name}' (special characters only)")
-            elif upper_table_name in self.RESERVED_KEYWORDS:
-                self.logger.warning(f"Invalid table name attempted: '{table_name}' (reserved keyword)")
-
-        return is_valid
-
-
-    def check_database_exists(self, db_name: Optional[str] = None) -> bool:
-        """Checks if the specified database exists using the admin engine."""
-        db_name_to_check = db_name or self.settings.name
-        if not db_name_to_check:
+    def database_exists(self, db_name: Optional[str] = None) -> bool:
+        db_name = db_name or self.settings.name
+        if not db_name:
             self.logger.error("No database name provided or configured.")
             return False
+        
+        validate_entity_name(db_name, 'database', self.logger)
 
         try:
             with self.admin_engine.connect() as connection:
                 query = text("SELECT 1 FROM pg_database WHERE datname = :db_name;")
-                result = connection.execute(query, {"db_name": db_name_to_check})
+                result = connection.execute(query, {"db_name": db_name})
                 return result.scalar() is not None
         except OperationalError as e:
             self.logger.error(f"Error checking database existence: {e}")
             return False
+        except Exception as e:
+            self.logger.error(f"Unexpected error: {e}")
+            return False
 
 
-    def create_database_if_not_exists(self, db_name: Optional[str] = None):
+    def create_database(self, db_name: Optional[str] = None):
         """Creates the database if it does not already exist."""
         db_name = db_name or self.settings.name
         if not db_name:
-            self.logger.error("No database name provided.")
-            return
+            self.logger.error("No database name provided or configured.")
+            return False
+        
+        validate_entity_name(db_name, 'database', self.logger)
 
-        try:
-            with self.admin_engine.connect() as connection:
-                query = text(f"CREATE DATABASE {db_name};")
-                connection.execute(query)
-                self.logger.info(f"Database '{db_name}' created successfully.")
-        except ProgrammingError as e:
-            if "already exists" not in str(e):
+        if not self.database_exists():
+            try:
+                with self.admin_engine.connect() as connection:
+                    query = text(f"CREATE DATABASE {db_name};")
+                    connection.execute(query)
+                    self.logger.info(f"Database '{db_name}' created successfully.")
+                    
+                    return True
+            except ProgrammingError as e:
                 self.logger.error(f"Error creating database: {e}")
-                raise
-            self.logger.info(f"Database '{db_name}' already exists.")
+                return False
+        else:
+            self.logger.error(f"Database '{db_name}' already exists.")
+            return False
 
 
-    def drop_database_if_exists(self, db_name: Optional[str] = None):
+    def drop_database(self, db_name: Optional[str] = None) -> bool:
         """Drops the database if it exists."""
         db_name = db_name or self.settings.name
         if not db_name:
-            self.logger.error("No database name provided.")
-            return
+            self.logger.error("No database name provided or configured.")
+            return False
 
-        try:
-            with self.admin_engine.connect() as connection:
-                terminate_query = text(""" 
-                    SELECT pg_terminate_backend(pg_stat_activity.pid)
-                    FROM pg_stat_activity
-                    WHERE pg_stat_activity.datname = :db_name
-                    AND pid <> pg_backend_pid();
-                """)
-                connection.execute(terminate_query, {"db_name": db_name})
-                self.logger.info(f"Terminated active connections for database '{db_name}'.")
+        validate_entity_name(db_name, 'database', self.logger)
 
-                drop_query = text(f"DROP DATABASE IF EXISTS \"{db_name}\";")
-                connection.execute(drop_query)
-                self.logger.info(f"Database '{db_name}' dropped successfully.")
-        except OperationalError as e:
-            self.logger.error(f"Error dropping database: {e}")
+        if self.database_exists():
+            try:
+                with self.admin_engine.connect() as connection:
+                    terminate_query = text(""" 
+                        SELECT pg_terminate_backend(pg_stat_activity.pid)
+                        FROM pg_stat_activity
+                        WHERE pg_stat_activity.datname = :db_name
+                        AND pid <> pg_backend_pid();
+                    """)
+                    connection.execute(terminate_query, {"db_name": db_name})
+                    self.logger.info(f"Terminated active connections for database '{db_name}'.")
+
+                    drop_query = text(f"DROP DATABASE IF EXISTS \"{db_name}\";")
+                    connection.execute(drop_query)
+                    self.logger.info(f"Database '{db_name}' dropped successfully.")
+
+                    return True
+            except OperationalError as e:
+                self.logger.error(f"Error dropping database: {e}")
+                return False
+            except Exception as e:
+                self.logger.error(f"Unexpected error: {e}")
+                return False
+        else:
+            self.logger.error(f"Database '{db_name}' does not exist.")
+            return False
 
 
     async def column_exists(self, schema_name: str, table_name: str, column_name: str) -> bool:
@@ -305,9 +276,11 @@ class AsyncDatabase(BaseDatabase):
         # Calculate system load based on all parameters
         load_factor = max(cpu_usage, mem_usage, disk_usage, latency)
         
-        if load_factor > self.LOAD_THRESHOLD:
-            return max(self.MIN_BATCH_SIZE, self.MAX_BATCH_SIZE // 2)
-        return self.MAX_BATCH_SIZE  # Use maximum batch size under normal conditions
+        if load_factor > LOAD_THRESHOLD:
+            return max(MIN_BATCH_SIZE, MAX_BATCH_SIZE // 2)
+        
+        # Use maximum batch size under normal conditions
+        return MAX_BATCH_SIZE
 
 
     async def _execute_in_batches(self, tasks, batch_size: int):
@@ -317,16 +290,26 @@ class AsyncDatabase(BaseDatabase):
             batch = tasks[i:i + batch_size]
             try:
                 # Gather and execute each batch concurrently
-                await asyncio.gather(*batch)
+                await gather(*batch)
                 self.logger.info(f"Batch of {len(batch)} index creation tasks completed successfully.")
             except Exception as e:
                 self.logger.error(f"An error occurred during batch execution: {e}")
                 raise
 
 
+    async def _execute_create_index(self, index_stmt: DDL):
+        """Executes the index creation statement using a connection from the pool."""
+        async with self._acquire_connection() as connection:  # Acquire connection from the pool
+            try:
+                # Execute the index creation statement
+                await connection.execute(str(index_stmt))
+            except Exception as e:
+                self.logger.error(f"Error creating index: {e}")
+                raise
+
+
     async def create_indexes(self, indexes: List[ColumnIndex]):
         """Creates indexes based on the provided configuration, asynchronously with batching and caching."""
-
         if not indexes:
             self.logger.warning("No indexes provided for creation.")
             return
@@ -334,45 +317,33 @@ class AsyncDatabase(BaseDatabase):
         # Dynamically adjust batch size based on system load
         batch_size = self._adjust_batch_size()
 
-        # Store existing indexes for each table (only once, cached)
-        indexes_names = {}
-
-        # Cache the list of indexes
-        async with self.indexes_lock:
-            for index_info in indexes:
-                table_name = index_info.table_name
-                if table_name not in self.index_cache:
-                    self.index_cache[table_name] = await self.list_indexes(table_name)
-                indexes_names[table_name] = self.index_cache[table_name]
-
-        # Function to check if the index exists on a table
-        def has_index_alias(table_name: str, index_name: str) -> bool:
-            return any(index == index_name for index in indexes_names.get(table_name, []))
-
-        # Prepare the tasks to be executed concurrently
+        # Cache the list of indexes using aiocache
         tasks = []
 
+        # Loop over index information
         for index_info in indexes:
             schema_name = index_info.schema_name
             column_names = index_info.column_names
             table_name = index_info.table_name
             index_type = index_info.type
 
-            # Check that all columns exist before proceeding (with caching)
+            # Check that all columns exist before proceeding (with async cache)
             for column_name in column_names:
-                if column_name not in self.column_cache:
-                    self.column_cache[column_name] = await self.column_exists(schema_name, table_name, column_name)
+                column_exists = await self.column_exists(schema_name, table_name, column_name)
 
-                if not self.column_cache[column_name]:
+                if not column_exists:
                     message = f"Column {column_name} does not exist in table '{schema_name}.{table_name}'."
                     self.logger.error(message)
                     raise ValueError(message)
 
+            # Retrieve the indexes for the table using the cache
+            existing_indexes = await self.list_indexes(table_name)
+
             # Create the index if not already existing
             for column_name in column_names:
-                index_name = f"{table_name}_{column_name}_idx"
+                index_name = f"{table_name}_{column_name}_index"
 
-                if has_index_alias(table_name, index_name):
+                if index_name in existing_indexes:
                     self.logger.info(f"Index {index_name} already exists on table {table_name}.")
                     continue  # Skip if the index already exists
 
@@ -390,17 +361,6 @@ class AsyncDatabase(BaseDatabase):
         # Run the index creation tasks in batches to avoid overloading the database
         if tasks:
             await self._execute_in_batches(tasks, batch_size)
-
-
-    async def _execute_create_index(self, index_stmt: DDL):
-        """Executes the index creation statement using a connection from the pool."""
-        async with self._acquire_connection() as connection:  # Acquire connection from the pool
-            try:
-                # Execute the index creation statement
-                await connection.execute(str(index_stmt))
-            except Exception as e:
-                self.logger.error(f"Error creating index: {e}")
-                raise
 
 
     async def _index_exists(self, table_name: str, index_name: str) -> bool:
