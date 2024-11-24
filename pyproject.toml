@@ -19,21 +19,21 @@ dependencies=[
     "ping3 >= 4.0.8",
     "psutil >= 6.1.0",
     "pydantic >= 2.9.2",
-    'sqlalchemy[asyncio] >= 2.0.35; python_version < "3.2"',
-    "factory-boy >= 3.3.1",
-    "mypy>=1.13.0",
-    "pre-commit>=4.0.1",
+    "sqlalchemy>=2.0.36",
+    "types-psutil>=6.1.0.20241102",
 ]
 
 [project.optional-dependencies]
 tests=[
     "factory_boy >= 3.3.1",
-    "pytest >= 8.3.3", 
-    "pytest-asyncio >= 0.24.0", 
-    "pytest-watch >= 4.2.0", 
-    "pytest-mock >= 3.14.0", 
+    "pytest >= 8.3.3",
+    "pytest-asyncio >= 0.24.0",
+    "pytest-watch >= 4.2.0",
+    "pytest-mock >= 3.14.0",
     "pytest-cov >= 6.0.0"]
 lint=[
+    "mypy>=1.13.0",
+    "pre-commit>=4.0.1",
     "ruff>=0.7.4"]
 
 [project.urls]
@@ -81,6 +81,8 @@ show_contexts = true
 python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
+check_untyped_defs = false
+ignore_missing_imports = true
 disable_error_code = "annotation-unchecked"
 mypy_path = "$MYPY_CONFIG_FILE_DIR/tests/django_project"
 
@@ -92,7 +94,7 @@ ignore_missing_imports = true
 src = ["pgbase"]
 line-length = 100
 # Define which linting checks you want to run
-select = ["E", "F", "W", "C", "B"]
+lint.select = ["E", "F", "W", "C", "B"]
 # Enable autofix on certain checks
 fix = true
 target-version = "py311"
