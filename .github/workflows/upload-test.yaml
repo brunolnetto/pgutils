@@ -14,10 +14,13 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Setup PostgreSQL
-      uses: tj-actions/install-postgresql@v3
-      with:
-        postgresql-version: 16
+    - uses: ikalnytskyi/action-setup-postgres@v7
+
+    - run: psql postgresql://postgres:postgres@localhost:5432/postgres -c "SELECT 1"
+    - run: psql service=postgres -c "SELECT 1"
+    - run: psql -c "SELECT 1"
+      env:
+        PGSERVICE: postgres
 
     #----------------------------------------------
     #       Install Python
