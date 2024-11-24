@@ -13,27 +13,28 @@ from sqlalchemy.exc import ProgrammingError, OperationalError
 from ping3 import ping, errors
 
 from .models import (
-    DatasourceSettings, 
-    DatabaseSettings, 
-    TableConstraint, 
-    Trigger, 
-    ColumnIndex, 
-    TablePaginator
+    DatasourceSettings,
+    DatabaseSettings,
+    TableConstraint,
+    Trigger,
+    ColumnIndex,
+    TablePaginator,
 )
-from .utils import (
-    mask_sensitive_data, validate_entity_name, retry_async
-)
-from .constants import PAGINATION_BATCH_SIZE
+from .utils import mask_sensitive_data, validate_entity_name, retry_async
+from .constants import PAGINATION_BATCH_SIZE, MAX_RETRIES, DEFAULT_HEALTHCHECK_TIMEOUT_S
 from .models import DatabaseConnection
 from .base import BaseDatabase
 
+
 class SyncDatabase(BaseDatabase):
     pass
+
 
 # Constants for dynamic batch size adjustment
 MIN_BATCH_SIZE = 1
 MAX_BATCH_SIZE = 10
 LOAD_THRESHOLD = 0.75
+
 
 class AsyncDatabase(BaseDatabase):
     """
@@ -41,7 +42,7 @@ class AsyncDatabase(BaseDatabase):
     Supports both synchronous and asynchronous operations.
     """
 
-    def __init__(self, settings: DatabaseSettings, logger: Logger = None):
+    def __init__(self, settings: DatabaseSettings, logger: Optional[Logger] = None):
         super().__init__(settings, logger)
 
         # Create engines and sessionmakers
@@ -55,8 +56,6 @@ class AsyncDatabase(BaseDatabase):
         self.indexes_lock = Lock()
         self.pool = None
 
-        self.active_queries = {}
-
     async def init(self):
         await self.__init_pool()
         await self.create_database(self.settings.name)
@@ -67,25 +66,24 @@ class AsyncDatabase(BaseDatabase):
         """
         try:
             # Create a connection pool for the database
-            credentials=f"{self.uri.username}:{self.uri.password}"
-            route=f"{self.uri.host}:{self.uri.port}/{self.uri.database}"
+            credentials = f"{self.uri.username}:{self.uri.password}"
+            route = f"{self.uri.host}:{self.uri.port}/{self.uri.database}"
             dsn = f"postgresql://{credentials}@{route}"
             self.pool = await create_pool(
                 dsn=dsn,
-                min_size=1,                             # Minimum number of connections in the pool
-                max_size=self.settings.pool_size,       # Maximum number of connections in the pool
-                max_inactive_connection_lifetime=300,   # Close inactive connections after 5 minutes
+                min_size=1,  # Minimum number of connections in the pool
+                max_size=self.settings.pool_size,  # Maximum number of connections in the pool
+                max_inactive_connection_lifetime=300,  # Close inactive connections after 5 minutes
             )
             self.logger.info("Database connection pool initialized.")
         except Exception as e:
             self.logger.error(f"Failed to initialize database pool: {e}")
 
-
     @asynccontextmanager
     async def _acquire_connection(self):
         """
         Acquires a connection from the pool.
-        
+
         Returns:
             asyncpg.Connection: A database connection object.
         """
@@ -103,18 +101,20 @@ class AsyncDatabase(BaseDatabase):
             isolation_level="AUTOCOMMIT",
             pool_size=self.settings.pool_size,
             max_overflow=self.settings.max_overflow,
-            pool_pre_ping=True
+            pool_pre_ping=True,
         )
 
     def _create_admin_engine(self):
         """Creates and returns the admin engine for administrative tasks."""
-        self.logger.debug(f"Creating admin engine with masked URI: {mask_sensitive_data(self.admin_uri)}")
+        self.logger.debug(
+            f"Creating admin engine with masked URI: {mask_sensitive_data(self.admin_uri)}"
+        )
         return create_engine(
             str(self.admin_uri),
             isolation_level="AUTOCOMMIT",
             pool_size=self.settings.pool_size,
             max_overflow=self.settings.max_overflow,
-            pool_pre_ping=True
+            pool_pre_ping=True,
         )
 
     def _create_sessionmaker(self):
@@ -134,14 +134,13 @@ class AsyncDatabase(BaseDatabase):
             finally:
                 await session.close()
 
-
     def database_exists(self, db_name: Optional[str] = None) -> bool:
         db_name = db_name or self.settings.name
         if not db_name:
             self.logger.error("No database name provided or configured.")
             return False
-        
-        validate_entity_name(db_name, 'database', self.logger)
+
+        validate_entity_name(db_name, "database", self.logger)
 
         try:
             with self.admin_engine.connect() as connection:
@@ -155,15 +154,14 @@ class AsyncDatabase(BaseDatabase):
             self.logger.error(f"Unexpected error: {e}")
             return False
 
-
     def create_database(self, db_name: Optional[str] = None):
         """Creates the database if it does not already exist."""
         db_name = db_name or self.settings.name
         if not db_name:
             self.logger.error("No database name provided or configured.")
             return False
-        
-        validate_entity_name(db_name, 'database', self.logger)
+
+        validate_entity_name(db_name, "database", self.logger)
 
         if not self.database_exists():
             try:
@@ -171,7 +169,7 @@ class AsyncDatabase(BaseDatabase):
                     query = text(f"CREATE DATABASE {db_name};")
                     connection.execute(query)
                     self.logger.info(f"Database '{db_name}' created successfully.")
-                    
+
                     return True
             except ProgrammingError as e:
                 self.logger.error(f"Error creating database: {e}")
@@ -180,7 +178,6 @@ class AsyncDatabase(BaseDatabase):
             self.logger.error(f"Database '{db_name}' already exists.")
             return False
 
-
     def drop_database(self, db_name: Optional[str] = None) -> bool:
         """Drops the database if it exists."""
         db_name = db_name or self.settings.name
@@ -188,12 +185,12 @@ class AsyncDatabase(BaseDatabase):
             self.logger.error("No database name provided or configured.")
             return False
 
-        validate_entity_name(db_name, 'database', self.logger)
+        validate_entity_name(db_name, "database", self.logger)
 
         if self.database_exists():
             try:
                 with self.admin_engine.connect() as connection:
-                    terminate_query = text(""" 
+                    terminate_query = text("""
                         SELECT pg_terminate_backend(pg_stat_activity.pid)
                         FROM pg_stat_activity
                         WHERE pg_stat_activity.datname = :db_name
@@ -202,7 +199,7 @@ class AsyncDatabase(BaseDatabase):
                     connection.execute(terminate_query, {"db_name": db_name})
                     self.logger.info(f"Terminated active connections for database '{db_name}'.")
 
-                    drop_query = text(f"DROP DATABASE IF EXISTS \"{db_name}\";")
+                    drop_query = text(f'DROP DATABASE IF EXISTS "{db_name}";')
                     connection.execute(drop_query)
                     self.logger.info(f"Database '{db_name}' dropped successfully.")
 
@@ -217,7 +214,6 @@ class AsyncDatabase(BaseDatabase):
             self.logger.error(f"Database '{db_name}' does not exist.")
             return False
 
-
     async def column_exists(self, schema_name: str, table_name: str, column_name: str) -> bool:
         """Checks if the specified column exists in the table."""
         async with self._acquire_connection() as connection:
@@ -230,68 +226,66 @@ class AsyncDatabase(BaseDatabase):
                 """
                 # Execute the query
                 result = await connection.fetch(query, table_name, schema_name)
-                
+
                 # Extract column names from the result and check if the column exists
-                columns = {row['column_name'] for row in result}
+                columns = {row["column_name"] for row in result}
                 return column_name in columns
             except Exception as e:
                 self.logger.error(f"Error checking column existence: {e}")
                 return False
 
-
     def _measure_network_latency(self, host: str = "8.8.8.8") -> float:
         """
         Measures network latency by sending a ping to a given host.
-        
+
         Args:
             host (str): The IP address or hostname to ping (default is Google's public DNS).
-        
+
         Returns:
-            float: The round-trip time (RTT) in seconds. Returns None if the ping fails.
+            float: The round-trip time (RTT) in seconds. Returns float("inf") if the ping fails.
         """
         try:
             # Send a single ping to the host and get the round-trip time in seconds
             rtt = ping(host, timeout=2)
             if rtt is None:
                 self.logger.warning(f"Failed to measure latency for {host}")
-                return float('inf')
+                return float("inf")  # Ensure a float is returned
             return rtt
         except errors.PingError as e:
             self.logger.error(f"Ping error when measuring latency to {host}: {e}")
-            return float('inf')
-
+            return float("inf")  # Ensure a float is returned
 
     def _adjust_batch_size(self) -> int:
         """Adjust the batch size based on system load."""
         cpu_usage = psutil.cpu_percent(interval=1) / 100  # Get CPU usage percentage
         mem_usage = psutil.virtual_memory().percent / 100  # Get memory usage percentage
-        disk_usage = psutil.disk_usage('/').percent / 100  # Disk usage
+        disk_usage = psutil.disk_usage("/").percent / 100  # Disk usage
         psutil.net_io_counters()  # Network I/O
         latency = self._measure_network_latency()
 
         # Calculate system load based on all parameters
         load_factor = max(cpu_usage, mem_usage, disk_usage, latency)
-        
+
         if load_factor > LOAD_THRESHOLD:
             return max(MIN_BATCH_SIZE, MAX_BATCH_SIZE // 2)
-        
+
         # Use maximum batch size under normal conditions
         return MAX_BATCH_SIZE
-
 
     async def _execute_in_batches(self, tasks, batch_size: int):
         """Execute tasks in smaller batches to avoid overloading the database."""
         # Process tasks in batches
         for i in range(0, len(tasks), batch_size):
-            batch = tasks[i:i + batch_size]
+            batch = tasks[i : i + batch_size]
             try:
                 # Gather and execute each batch concurrently
                 await gather(*batch)
-                self.logger.info(f"Batch of {len(batch)} index creation tasks completed successfully.")
+                self.logger.info(
+                    f"Batch of {len(batch)} index creation tasks completed successfully."
+                )
             except Exception as e:
                 self.logger.error(f"An error occurred during batch execution: {e}")
                 raise
-
 
     async def _execute_create_index(self, index_stmt: DDL):
         """Executes the index creation statement using a connection from the pool."""
@@ -303,9 +297,11 @@ class AsyncDatabase(BaseDatabase):
                 self.logger.error(f"Error creating index: {e}")
                 raise
 
-
     async def create_indexes(self, indexes: List[ColumnIndex]):
-        """Creates indexes based on the provided configuration, asynchronously with batching and caching."""
+        """
+        Creates indexes based on the provided configuration,
+        asynchronously with batching and caching.
+        """
         if not indexes:
             self.logger.warning("No indexes provided for creation.")
             return
@@ -326,7 +322,8 @@ class AsyncDatabase(BaseDatabase):
                 column_exists = await self.column_exists(schema_name, table_name, column_name)
 
                 if not column_exists:
-                    message = f"Column {column_name} does not exist in table '{schema_name}.{table_name}'."
+                    table_alias = f"{schema_name}.{table_name}"
+                    message = f"Column {column_name} does not exist in table '{table_alias}'."
                     self.logger.error(message)
                     raise ValueError(message)
 
@@ -344,7 +341,7 @@ class AsyncDatabase(BaseDatabase):
                 # Build the CREATE INDEX statement
                 index_stmt = DDL(
                     f"""
-                    CREATE INDEX IF NOT EXISTS {index_name} 
+                    CREATE INDEX IF NOT EXISTS {index_name}
                     ON {table_name} USING {index_type} ({column_name});
                     """
                 )
@@ -356,22 +353,19 @@ class AsyncDatabase(BaseDatabase):
         if tasks:
             await self._execute_in_batches(tasks, batch_size)
 
-
     async def _index_exists(self, table_name: str, index_name: str) -> bool:
         """Check if the specified index exists on the given table."""
         indexes = await self.list_indexes(table_name)
         return index_name in indexes
 
-
     async def schema_exists(self, schema_name):
-        validate_entity_name(schema_name, 'schema', self.logger)
+        validate_entity_name(schema_name, "schema", self.logger)
 
         query_str = """
             SELECT schema_name FROM information_schema.schemata WHERE schema_name = :table_schema
         """
-        result = await self.execute(query_str, {'table_schema': schema_name})
+        result = await self.execute(query_str, {"table_schema": schema_name})
         return bool(result)
-
 
     async def check_active_connections(self) -> bool:
         """Checks if there are active connections in the database."""
@@ -380,7 +374,6 @@ class AsyncDatabase(BaseDatabase):
         active_connections = result[0]["count"]  # Access the count from the first row
         return active_connections > 0
 
-
     async def check_replication_status(self) -> bool:
         """Checks if replication is active in the database (if applicable)."""
         query = "SELECT COUNT(*) FROM pg_stat_replication WHERE state = 'streaming'"
@@ -388,12 +381,16 @@ class AsyncDatabase(BaseDatabase):
         replication_connections = result[0]["count"]  # Access the count from the first row
         return replication_connections > 0
 
-
-    async def health_check(self, use_admin_uri: bool = False) -> bool:
+    async def health_check(
+        self,
+        use_admin_uri: bool = False,
+        timeout: Optional[int] = DEFAULT_HEALTHCHECK_TIMEOUT_S,
+        max_retries: int = MAX_RETRIES,
+    ) -> bool:
         """Performs a health check on the database connection with retries."""
 
         # Define the health check action to be retried
-        async def action(): 
+        async def action():
             try:
                 # Perform checks
                 if not await self.check_active_connections():
@@ -413,20 +410,21 @@ class AsyncDatabase(BaseDatabase):
         # Call the retry_async function for retry logic
         return await retry_async(action)
 
-
     async def create_tables(self):
         """Create tables based on SQLAlchemy models."""
-        self.base.metadata.create_all
-        self.logger.info("Successfully created all tables asynchronously.")
+        async with self.engine.begin() as conn:  # Open an async connection
+            await conn.run_sync(self.base.metadata.create_all)  # Use run_sync to execute the DDL
 
+        self.logger.info("Successfully created all tables asynchronously.")
 
     async def drop_tables(self):
         """Unified method to drop tables synchronously or asynchronously."""
-        self.base.metadata.drop_all
+        async with self.engine.begin() as conn:
+            await conn.run_sync(self.base.metadata.drop_all)
+
         self.logger.info("Successfully dropped all tables asynchronously.")
 
-
-    async def execute(self, query: str, params: dict = None):
+    async def execute(self, query: str, params: Optional[dict] = None):
         """
         Execute a SQL query and return results asynchronously.
         """
@@ -449,7 +447,8 @@ class AsyncDatabase(BaseDatabase):
 
     def _convert_to_asyncpg_query(self, query: str, params: dict):
         """
-        Convert query with named placeholders (:name) to asyncpg-style positional placeholders ($1, $2, ...).
+        Convert query with named placeholders (:name) to
+        asyncpg-style positional placeholders ($1, $2, ...).
         """
         # Replace each named placeholder with a positional placeholder
         positional_query = query
@@ -457,16 +456,16 @@ class AsyncDatabase(BaseDatabase):
         for i, (key, value) in enumerate(params.items(), start=1):
             positional_query = positional_query.replace(f":{key}", f"${i}")
             positional_values.append(value)
-        
+
         return positional_query, positional_values
 
     async def add_audit_trigger(self, table_name: str):
         """Add an audit trigger to the specified table."""
-        
-        # Validate table names to prevent SQL injection
-        validate_entity_name(table_name, 'table', self.logger)
 
-        audit_table_name = table_name + '_audit'
+        # Validate table names to prevent SQL injection
+        validate_entity_name(table_name, "table", self.logger)
+
+        audit_table_name = table_name + "_audit"
 
         # Prepare queries
         create_table_query = f"""
@@ -499,38 +498,36 @@ class AsyncDatabase(BaseDatabase):
         await self.execute(create_function_query)
         await self.execute(create_trigger_query)
 
-
     async def disconnect(self):
         """Cleans up and closes the database connections, synchronous or asynchronously."""
         await self.engine.dispose()
 
-
     async def paginate(
-        self, conn: DatabaseConnection, 
-        query: str, params: Optional[Dict[str, Any]] = None, 
-        batch_size: int = PAGINATION_BATCH_SIZE
+        self,
+        conn: DatabaseConnection,
+        query: str,
+        params: Optional[Dict[str, Any]] = None,
+        batch_size: int = PAGINATION_BATCH_SIZE,
     ) -> AsyncGenerator:
         """Unified paginate interface for synchronous and asynchronous queries."""
         paginator = TablePaginator(conn, query, params=params, batch_size=batch_size)
         async for page in paginator._paginated_query_async():
             yield page
 
-
     # 1. List tables
-    async def list_tables(self, schema_name: str = 'public') -> List[Any]:
+    async def list_tables(self, schema_name: str = "public") -> List[Any]:
         """List all tables in the specified schema."""
         if not await self.schema_exists(schema_name):
-            error_message=f"Schema '{schema_name}' does not exist."
+            error_message = f"Schema '{schema_name}' does not exist."
             self.logger.error(error_message)
 
         query_str = """
-            SELECT table_name 
-            FROM information_schema.tables 
+            SELECT table_name
+            FROM information_schema.tables
             WHERE table_schema = :table_schema;
         """
-        result = await self.execute(query_str, {'table_schema': schema_name})
+        result = await self.execute(query_str, {"table_schema": schema_name})
         return [table[0] for table in result]
-
 
     # 2. List Schemas
     async def list_schemas(self) -> List[Any]:
@@ -539,42 +536,36 @@ class AsyncDatabase(BaseDatabase):
         result = await self.execute(sync_query)
         return [schema[0] for schema in result]
 
-
     # 3. List Indexes
-    async def list_indexes(self,  table_name: str, schema_name: str = 'public') -> List[Any]:
+    async def list_indexes(self, table_name: str, schema_name: str = "public") -> List[Any]:
         """List all indexes for a given table."""
-        
-        validate_entity_name(table_name, 'table', self.logger)
-        validate_entity_name(schema_name, 'schema', self.logger)
-        
+
+        validate_entity_name(table_name, "table", self.logger)
+        validate_entity_name(schema_name, "schema", self.logger)
+
         sync_query = """
-            SELECT indexname FROM pg_indexes 
-            WHERE 
+            SELECT indexname FROM pg_indexes
+            WHERE
                 schemaname = :schema_name and
                 tablename = :table_name;
         """
-        params={
-            'table_name': table_name,
-            'schema_name': schema_name
-        }
+        params = {"table_name": table_name, "schema_name": schema_name}
         result = await self.execute(sync_query, params)
         return [index[0] for index in result]
 
-
     # 4. List Views
-    async def list_views(self, schema_name='public') -> List[Any]:
+    async def list_views(self, schema_name="public") -> List[Any]:
         """List all views in the specified schema."""
 
-        validate_entity_name(schema_name, 'schema', self.logger)
+        validate_entity_name(schema_name, "schema", self.logger)
 
         sync_query = """
-            SELECT table_name 
-            FROM information_schema.views 
+            SELECT table_name
+            FROM information_schema.views
             WHERE table_schema = :table_schema;
         """
-        result = await self.execute(sync_query, {'table_schema': schema_name})
+        result = await self.execute(sync_query, {"table_schema": schema_name})
         return [view[0] for view in result]
-
 
     # 5. List Sequences
     async def list_sequences(self) -> List[Any]:
@@ -583,13 +574,14 @@ class AsyncDatabase(BaseDatabase):
         result = await self.execute(sync_query)
         return [sequence[0] for sequence in result]
 
-
     # 6. List Constraints
-    async def list_constraints(self, table_name: str, schema_name: str = 'public') -> List[TableConstraint]:
+    async def list_constraints(
+        self, table_name: str, schema_name: str = "public"
+    ) -> List[TableConstraint]:
         """List all constraints for a specified table."""
 
-        validate_entity_name(table_name, 'table', self.logger)
-        validate_entity_name(schema_name, 'schema', self.logger)
+        validate_entity_name(table_name, "table", self.logger)
+        validate_entity_name(schema_name, "schema", self.logger)
 
         sync_query = """
             SELECT
@@ -607,79 +599,65 @@ class AsyncDatabase(BaseDatabase):
             LEFT JOIN information_schema.constraint_column_usage AS ccu
                 ON tc.constraint_name = ccu.constraint_name
                 AND tc.table_schema = ccu.table_schema
-            WHERE 
-                tc.table_name = :table_name AND 
+            WHERE
+                tc.table_name = :table_name AND
                 tc.table_schema = :table_schema;
         """
-        params={
-            'table_schema': schema_name, 
-            'table_name': table_name
-        }
+        params = {"table_schema": schema_name, "table_name": table_name}
         result = await self.execute(sync_query, params)
         return [
             TableConstraint(
-                constraint_name=constraint_name,
-                constraint_type=constraint_type,
-                table_name=table_name,
-                column_name=column_name,
-                foreign_table_name=foreign_table_name,
-                foreign_column_name=foreign_column_name
-            ) 
-            for constraint_name, constraint_type, 
-            table_name, column_name, 
-            foreign_table_name, foreign_column_name in result
+                constraint_name=column_values[0],
+                constraint_type=column_values[1],
+                table_name=column_values[2],
+                column_name=column_values[3],
+                foreign_table_name=column_values[4],
+                foreign_column_name=column_values[5],
+            )
+            for column_values in result
         ]
 
-
     # 7. List Triggers
-    async def list_triggers(self, table_name: str, schema_name: str = 'public') -> List[Any]:
+    async def list_triggers(self, table_name: str, schema_name: str = "public") -> List[Any]:
         """List all triggers for a specified table."""
-        validate_entity_name(table_name, 'table', self.logger)
-        validate_entity_name(schema_name, 'schema', self.logger)
+        validate_entity_name(table_name, "table", self.logger)
+        validate_entity_name(schema_name, "schema", self.logger)
 
         sync_query = """
-            SELECT * 
-            FROM information_schema.triggers 
-            WHERE 
+            SELECT *
+            FROM information_schema.triggers
+            WHERE
                 event_object_table = :table_name AND
                 event_object_schema = :schema_name;
         """
 
         # Assuming list_columns method exists
-        columns = await self.list_columns('triggers', 'information_schema')
-        params={
-            'schema_name': schema_name, 
-            'table_name': table_name
-        }
+        columns = await self.list_columns("triggers", "information_schema")
+        params = {"schema_name": schema_name, "table_name": table_name}
         result = await self.execute(sync_query, params)
         return [
-            Trigger(
-                **dict(zip(columns, trigger_info))
-            ) for trigger_info in result
+            Trigger(**dict(zip(columns, trigger_info, strict=False))) for trigger_info in result
         ]
-
 
     # 8. List Functions
     async def list_functions(self) -> List[Any]:
         """List all functions in the database."""
         sync_query = """
-            SELECT routine_name 
-            FROM information_schema.routines 
+            SELECT routine_name
+            FROM information_schema.routines
             WHERE routine_type = 'FUNCTION';
         """
         return await self.execute(sync_query)
-
 
     # 9. List Procedures
     async def list_procedures(self) -> List[Any]:
         """List all procedures in the database."""
         sync_query = """
-            SELECT routine_name 
-            FROM information_schema.routines 
+            SELECT routine_name
+            FROM information_schema.routines
             WHERE routine_type = 'PROCEDURE';
         """
         return await self.execute(sync_query)
-
 
     # 10. List Materialized Views
     async def list_materialized_views(self) -> List[Any]:
@@ -687,26 +665,21 @@ class AsyncDatabase(BaseDatabase):
         sync_query = "SELECT matviewname FROM pg_matviews;"
         return await self.execute(sync_query)
 
-
     # 11. List Columns
-    async def list_columns(self, table_name: str, schema_name: str = 'public') -> List:
+    async def list_columns(self, table_name: str, schema_name: str = "public") -> List:
         """List all columns for a specified table in the schema."""
-        validate_entity_name(table_name, 'table', self.logger)
-        validate_entity_name(schema_name, 'schema', self.logger)
+        validate_entity_name(table_name, "table", self.logger)
+        validate_entity_name(schema_name, "schema", self.logger)
 
         sync_query = """
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_schema = :table_schema 
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = :table_schema
             AND table_name = :table_name;
         """
-        params={
-            'table_schema': schema_name, 
-            'table_name': table_name
-        }
+        params = {"table_schema": schema_name, "table_name": table_name}
         result = await self.execute(sync_query, params)
         return [column[0] for column in result]
-
 
     # 12. List User-Defined Types
     async def list_types(self) -> List:
@@ -714,13 +687,11 @@ class AsyncDatabase(BaseDatabase):
         sync_query = "SELECT typname FROM pg_type WHERE typtype = 'e';"
         return await self.execute(sync_query)
 
-
     # 13. List Roles
     async def list_roles(self) -> List:
         """List all roles in the database."""
         sync_query = "SELECT rolname FROM pg_roles;"
         return await self.execute(sync_query)
-
 
     # 14. List Extensions
     async def list_extensions(self) -> List:
@@ -728,9 +699,9 @@ class AsyncDatabase(BaseDatabase):
         sync_query = "SELECT extname FROM pg_extension;"
         return await self.execute(sync_query)
 
-
     def __repr__(self):
         return f"<AsyncDatabase(uri={mask_sensitive_data(self.uri)})>"
+
 
 class Datasource:
     """
@@ -738,7 +709,8 @@ class Datasource:
 
     Args:
         settings (DatasourceSettings): Settings containing all database configurations.
-        logger (Optional[Logger]): Logger for logging information and errors. Defaults to a logger with the class name.
+        logger (Optional[Logger]): Logger for logging information and errors. Defaults
+        to a logger with the class name.
 
     Attributes:
         logger (Logger): Logger used for logging.
@@ -762,13 +734,15 @@ class Datasource:
         method = getattr(database, method_name)
         return await method(*args)
 
-    def get_database(self, name: str) -> BaseDatabase:
+    def get_database(self, name: str) -> AsyncDatabase:
         """Returns the database instance for the given name."""
         if name not in self.databases:
             raise KeyError(f"Database '{name}' not found.")
         return self.databases[name]
 
-    async def _call_database_method_all(self, method_name: str, *args: Any) -> Dict[str, Union[Any, str]]:
+    async def _call_database_method_all(
+        self, method_name: str, *args: Any
+    ) -> Dict[str, Union[Any, str]]:
         """
         Calls a method on all databases and returns the results concurrently.
 
@@ -777,8 +751,10 @@ class Datasource:
             *args: Arguments to pass to the database method.
 
         Returns:
-            A dictionary with database names as keys and the result of the method call or an error message.
+            A dictionary with database names as keys and the result of the method
+            call or an error message.
         """
+
         async def call_method(name: str, db: AsyncDatabase) -> Tuple[str, Union[Any, str]]:
             """Helper function to call a method on a single database."""
             self.logger.info(f"Starting {method_name} for database '{name}'")
@@ -788,7 +764,9 @@ class Datasource:
 
                 # Ensure the method is callable before attempting to invoke it
                 if not callable(method):
-                    raise AttributeError(f"Method '{method_name}' is not callable on database '{name}'.")
+                    raise AttributeError(
+                        f"Method '{method_name}' is not callable on database '{name}'."
+                    )
 
                 # Call the method with provided arguments
                 result = await method(*args)
@@ -806,9 +784,7 @@ class Datasource:
                 return name, error_message
 
         # Use asyncio.gather to run the method calls concurrently
-        tasks = [
-            call_method(name, db) for name, db in self.databases.items()
-        ]
+        tasks = [call_method(name, db) for name, db in self.databases.items()]
         results = await gather(*tasks)
 
         # Convert the list of results into a dictionary
@@ -832,9 +808,7 @@ class Datasource:
 
     async def list_sequences(self, database_name: str):
         """List sequences from a specified database."""
-        return await self._call_database_method(
-            database_name, "list_sequences"
-        )
+        return await self._call_database_method(database_name, "list_sequences")
 
     async def list_constraints(self, database_name: str, table_schema: str, table_name: str):
         """List constraints for a table in a specified database."""
@@ -856,9 +830,7 @@ class Datasource:
 
     async def list_materialized_views(self, database_name: str):
         """List materialized views from a specified database."""
-        return await self._call_database_method(
-            database_name, "list_materialized_views"
-        )
+        return await self._call_database_method(database_name, "list_materialized_views")
 
     async def list_columns(self, database_name: str, table_schema: str, table_name: str):
         """List columns for a table in a specified database."""
@@ -866,7 +838,9 @@ class Datasource:
             database_name, "list_columns", table_name, table_schema
         )
 
-    async def column_exists(self, database_name: str, table_schema: str, table_name: str, column: str):
+    async def column_exists(
+        self, database_name: str, table_schema: str, table_name: str, column: str
+    ):
         """Check if a column exists in a specified table and database."""
         return await self._call_database_method(
             database_name, "column_exists", table_schema, table_name, column
@@ -884,23 +858,23 @@ class Datasource:
         """List extensions from a specified database."""
         return await self._call_database_method(database_name, "list_extensions")
 
-    async def health_check_all(self) -> Dict[str, bool]:
+    async def health_check_all(self) -> Dict[str, Any]:
         """Performs health checks on all databases."""
-        return await self._call_database_method_all('health_check')
+        return await self._call_database_method_all("health_check")
 
     async def create_tables_all(self):
         """Creates tables for all databases."""
-        await self._call_database_method_all('create_tables')
+        await self._call_database_method_all("create_tables")
 
     async def disconnect_all(self):
         """Disconnects all databases."""
-        await self._call_database_method_all('disconnect')
+        await self._call_database_method_all("disconnect")
 
     def __getitem__(self, database_name: str):
         return self.get_database(database_name)
 
     def __repr__(self):
-        return f'Datasource({self.databases.keys()})'
+        return f"Datasource({self.databases.keys()})"
 
 
 class DataGrid:
@@ -908,8 +882,10 @@ class DataGrid:
     Manages multiple Datasource instances.
 
     Args:
-        settings_dict (Dict[str, DatasourceSettings]): A dictionary containing datasource names and their settings.
-        logger (Optional[Logger]): Logger for logging information and errors. Defaults to a logger with the class name.
+        settings_dict (Dict[str, DatasourceSettings]): A dictionary containing
+        datasource names and their settings.
+        logger (Optional[Logger]): Logger for logging information and errors.
+        Defaults to a logger with the class name.
 
     Attributes:
         logger (Logger): Logger used for logging.
@@ -958,20 +934,20 @@ class DataGrid:
                 self.logger.info(f"{method_name} for datasource '{name}' completed successfully.")
             except Exception as e:
                 self.logger.error(f"{method_name} failed for datasource '{name}': {e}")
-                results[name] = {'error': str(e)}
+                results[name] = {"error": str(e)}
         return results
 
     async def health_check_all(self) -> Dict[str, Dict[str, bool]]:
         """Performs health checks on all datasources."""
-        return await self._call_datasource_method_all('health_check_all')
+        return await self._call_datasource_method_all("health_check_all")
 
     async def create_tables_all(self):
         """Creates tables for all datasources."""
-        await self._call_datasource_method_all('create_tables_all')
+        await self._call_datasource_method_all("create_tables_all")
 
     async def disconnect_all(self):
         """Disconnects all datasources."""
-        await self._call_datasource_method_all('disconnect_all')
+        await self._call_datasource_method_all("disconnect_all")
 
     def __repr__(self) -> str:
         return f"<DataGrid(datasources={list(self.datasources.keys())})>"

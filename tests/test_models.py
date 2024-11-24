@@ -4,156 +4,135 @@ from pydantic import ValidationError
 from sqlalchemy import text
 
 from pgbase.models import (
-    DatabaseSettings, DatasourceSettings, ColumnIndex, QueryValidator, 
-    QueryValidationError, ExcessiveSelectWarning,
+    DatabaseSettings,
+    DatasourceSettings,
+    ColumnIndex,
+    QueryValidator,
+    QueryValidationError,
+    ExcessiveSelectWarning,
 )
-from pgbase.models import (
-    TablePaginator,
-    DEFAULT_ADMIN_USERNAME, 
-    DEFAULT_ADMIN_PASSWORD
-)
+from pgbase.models import TablePaginator, DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD
 
 
 def test_database_config_valid():
     config = DatabaseSettings(
-        uri='postgresql://user:password@localhost:5432/mydatabase',
-        admin_username='admin',
-        admin_password='strongpassword'
+        uri="postgresql://user:password@localhost:5432/mydatabase",
+        admin_username="admin",
+        admin_password="strongpassword",
     )
-    
-    assert config.name == 'mydatabase'
-    assert str(config.admin_uri) == 'postgresql+psycopg2://admin:***@localhost:5432'
-    assert str(config.complete_uri) == 'postgresql://user:***@localhost:5432/mydatabase'
+
+    assert config.name == "mydatabase"
+    assert str(config.admin_uri) == "postgresql+psycopg2://admin:***@localhost:5432"
+    assert str(config.complete_uri) == "postgresql://user:***@localhost:5432/mydatabase"
 
 
 def test_database_config_invalid_uri():
     with pytest.raises(ValidationError) as excinfo:
-        DatabaseSettings(
-            uri='invalid_uri', admin_username='admin', admin_password='strongpassword'
-        )
-    assert 'relative URL without a base' in str(excinfo.value)
+        DatabaseSettings(uri="invalid_uri", admin_username="admin", admin_password="strongpassword")
+    assert "relative URL without a base" in str(excinfo.value)
 
 
 def test_database_config_invalid_pool_size():
     with pytest.raises(ValidationError) as excinfo:
         DatabaseSettings(
-            uri='postgresql://user:password@localhost:5432/mydatabase',
-            admin_username='admin',
-            admin_password='strongpassword',
-            pool_size=-1
+            uri="postgresql://user:password@localhost:5432/mydatabase",
+            admin_username="admin",
+            admin_password="strongpassword",
+            pool_size=-1,
         )
-    assert 'should be greater than 0' in str(excinfo.value)
+    assert "should be greater than 0" in str(excinfo.value)
 
 
 def test_database_config_invalid_url():
     with pytest.raises(ValidationError) as excinfo:
         DatabaseSettings(
-            uri='mysql://user:password@localhost:5432/mydatabase',
-            admin_username='admin',
-            admin_password='strongpassword',
-            pool_size=1
+            uri="mysql://user:password@localhost:5432/mydatabase",
+            admin_username="admin",
+            admin_password="strongpassword",
+            pool_size=1,
         )
 
-    assert 'URI must start with' in str(excinfo.value)
+    assert "URI must start with" in str(excinfo.value)
 
 
 def test_empty_datasource_settings():
     with pytest.raises(ValidationError) as excinfo:
-        DatasourceSettings(name='invalid datasource')
+        DatasourceSettings(name="invalid datasource")
 
-    assert 'Field required' in str(excinfo.value)
+    assert "Field required" in str(excinfo.value)
 
 
 def test_valid_index_btree():
-    index = ColumnIndex(
-        table_name='my_table', type='btree', column_names=['column1', 'column2']
-    )
-    assert index.type == 'btree'
-    assert index.column_names == ['column1', 'column2']
+    index = ColumnIndex(table_name="my_table", type="btree", column_names=["column1", "column2"])
+    assert index.type == "btree"
+    assert index.column_names == ["column1", "column2"]
     assert index.expression is None
     assert index.condition is None
 
 
 def test_invalid_index_btree_duplicate_indexes():
     with pytest.raises(ValidationError) as excinfo:
-        ColumnIndex(
-            table_name='my_table', 
-            type='btree', 
-            column_names=['column1', 'column1']
-        )
+        ColumnIndex(table_name="my_table", type="btree", column_names=["column1", "column1"])
 
     assert "Index cannot have duplicate columns." in str(excinfo.value)
 
 
 def test_valid_index_expression():
     index = ColumnIndex(
-        schema_name='public',
-        table_name='my_table', 
-        type='expression', 
-        column_names=['column1', 'column2'], 
-        expression='column1 + column2'
+        schema_name="public",
+        table_name="my_table",
+        type="expression",
+        column_names=["column1", "column2"],
+        expression="column1 + column2",
     )
-    assert index.type == 'expression'
-    assert index.column_names == ['column1', 'column2']
-    assert index.expression == 'column1 + column2'
+    assert index.type == "expression"
+    assert index.column_names == ["column1", "column2"]
+    assert index.expression == "column1 + column2"
 
 
 def test_valid_index_partial():
     index = ColumnIndex(
-        schema_name='public',
-        table_name='my_table', 
-        type='partial', 
-        column_names=['column1'], 
-        condition='column1 IS NOT NULL'
+        schema_name="public",
+        table_name="my_table",
+        type="partial",
+        column_names=["column1"],
+        condition="column1 IS NOT NULL",
     )
-    assert index.type == 'partial'
-    assert index.column_names == ['column1']
-    assert index.condition == 'column1 IS NOT NULL'
+    assert index.type == "partial"
+    assert index.column_names == ["column1"]
+    assert index.condition == "column1 IS NOT NULL"
 
 
 def test_invalid_index_type():
     with pytest.raises(ValidationError) as exc_info:
-        ColumnIndex(
-            type='invalid_type', columns=['column1'])
+        ColumnIndex(type="invalid_type", columns=["column1"])
     assert "Index type must be one of" in str(exc_info.value)
 
 
 def test_columns_must_be_list():
     with pytest.raises(ValidationError) as exc_info:
-        ColumnIndex(
-            table_name='my_table', 
-            type='btree', 
-            column_names='not_a_list'
-        )
-    
+        ColumnIndex(table_name="my_table", type="btree", column_names="not_a_list")
+
     assert "Input should be a valid list" in str(exc_info.value)
 
 
 def test_expression_required_for_expression_index():
     with pytest.raises(ValidationError) as exc_info:
-        ColumnIndex(
-            table_name='my_table', 
-            type='expression', 
-            column_names=['column1']
-        )
+        ColumnIndex(table_name="my_table", type="expression", column_names=["column1"])
 
     assert "Expression index must include 'expression'." in str(exc_info.value)
 
 
 def test_condition_required_for_partial_index():
     with pytest.raises(ValidationError) as exc_info:
-        ColumnIndex(
-            table_name='my_table', 
-            type='partial', 
-            column_names=['column1']
-        )
-    
+        ColumnIndex(table_name="my_table", type="partial", column_names=["column1"])
+
     assert "Partial index must include 'condition'." in str(exc_info.value)
 
 
 def test_table_data_sync(sync_db_engine):
     with sync_db_engine.connect() as conn:
-        query=text("SELECT * FROM public.test_table;")
+        query = text("SELECT * FROM public.test_table;")
         result = conn.execute(query).fetchall()
 
         assert len(result) == 4, "Expected 4 rows in test_table."
@@ -167,7 +146,7 @@ def test_database_config_validation():
         admin_password="postgres",
         async_mode=True,
     )
-    assert valid_config.name == 'mydb'
+    assert valid_config.name == "mydb"
     assert str(valid_config.admin_uri) == "postgresql+psycopg2://postgres:***@localhost:5432"
 
     # Invalid URI
@@ -185,34 +164,31 @@ def test_database_config_validation():
     "uri, expect_exception",
     [
         # Invalid schemes (expect exception)
-        ("mysql://user:pass@localhost/dbname", True),   # MySQL is not allowed
+        ("mysql://user:pass@localhost/dbname", True),  # MySQL is not allowed
         ("sqlite://user:pass@localhost/dbname", True),  # SQLite is not allowed
-        ("ftp://user:pass@localhost/dbname", True),     # FTP is not allowed
-        ("http://user:pass@localhost/dbname", True),    # HTTP is not allowed
-        
+        ("ftp://user:pass@localhost/dbname", True),  # FTP is not allowed
+        ("http://user:pass@localhost/dbname", True),  # HTTP is not allowed
         # Valid schemes (no exception)
-        ("postgresql://user:pass@localhost/dbname", False),         # PostgreSQL standard
-        ("postgresql+psycopg://user:pass@localhost/dbname", False), # PostgreSQL with psycopg
-        ("postgresql+asyncpg://user:pass@localhost/dbname", False), # PostgreSQL with asyncpg
-    ]
+        ("postgresql://user:pass@localhost/dbname", False),  # PostgreSQL standard
+        ("postgresql+psycopg://user:pass@localhost/dbname", False),  # PostgreSQL with psycopg
+        ("postgresql+asyncpg://user:pass@localhost/dbname", False),  # PostgreSQL with asyncpg
+    ],
 )
 def test_validate_uri_scheme(uri, expect_exception):
     """Test if the URI scheme validation raises a ValueError for invalid schemes."""
     if expect_exception:
-
         with pytest.raises(ValueError, match="URI must start with"):
             DatabaseSettings(
                 uri=uri,
                 admin_username=DEFAULT_ADMIN_USERNAME,
-                admin_password=DEFAULT_ADMIN_PASSWORD
+                admin_password=DEFAULT_ADMIN_PASSWORD,
             )
 
     else:
-        # If no exception is expected, the validation should pass, and DatabaseSettings should be created
+        # If no exception is expected, the validation should pass, and DatabaseSettings
+        # should be created
         settings = DatabaseSettings(
-            uri=uri,
-            admin_username=DEFAULT_ADMIN_USERNAME,
-            admin_password=DEFAULT_ADMIN_PASSWORD
+            uri=uri, admin_username=DEFAULT_ADMIN_USERNAME, admin_password=DEFAULT_ADMIN_PASSWORD
         )
         assert str(settings.uri) == uri
 
@@ -226,13 +202,10 @@ async def test_async_paginator(async_session_factory):
         )
 
         # Fetch and assert paginated results in batches
-        expected_batches = [
-            [('Alice', ), ('Bob', )],
-            [('Charlie', ), ('David', )]
-        ]
+        expected_batches = [[("Alice",), ("Bob",)], [("Charlie",), ("David",)]]
 
         results = []
-        
+
         async for batch in paginator.paginate():
             results.append(batch)
 
@@ -242,9 +215,10 @@ async def test_async_paginator(async_session_factory):
         # Assert each batch
         for i, expected_batch in enumerate(expected_batches):
             assert results[i] == expected_batch
-            
-        query_count=await paginator.get_total_count()
+
+        query_count = await paginator.get_total_count()
         assert query_count == 4
+
 
 @pytest.mark.asyncio
 async def test_async_paginator_after_deleting_all_entries(async_session_factory):
@@ -269,8 +243,9 @@ async def test_async_paginator_after_deleting_all_entries(async_session_factory)
 async def test_paginator_with_params(async_session_factory):
     async for async_session in async_session_factory:
         paginator = TablePaginator(
-            async_session, "SELECT name FROM public.test_table WHERE name LIKE :name", 
-            params={'name': 'A%'}
+            async_session,
+            "SELECT name FROM public.test_table WHERE name LIKE :name",
+            params={"name": "A%"},
         )
 
         # Fetch paginated results
@@ -279,16 +254,14 @@ async def test_paginator_with_params(async_session_factory):
             results.extend(batch)
 
         assert len(results) == 1  # Only 'Alice' matches the condition
-        assert results[0] == ('Alice', )
+        assert results[0] == ("Alice",)
 
 
 @pytest.mark.asyncio
 async def test_sync_paginator_batches(async_session_factory):
     async for async_session in async_session_factory:
         paginator = TablePaginator(
-            conn=async_session,
-            query="SELECT name FROM public.test_table",
-            batch_size=2
+            conn=async_session, query="SELECT name FROM public.test_table", batch_size=2
         )
 
         batches = []
@@ -296,8 +269,8 @@ async def test_sync_paginator_batches(async_session_factory):
             batches.append(batch)
 
         assert len(batches) == 2  # Should have 2 batches of 2 records
-        assert batches[0] == [('Alice', ), ('Bob', )]
-        assert batches[1] == [('Charlie', ), ('David', )]
+        assert batches[0] == [("Alice",), ("Bob",)]
+        assert batches[1] == [("Charlie",), ("David",)]
 
 
 @pytest.mark.asyncio
@@ -306,11 +279,9 @@ async def test_get_total_count(async_session_factory):
     async for async_session in async_session_factory:
         # Prepare the paginator
         paginator = TablePaginator(
-            conn=async_session,
-            query="SELECT name FROM test_table",
-            batch_size=2
+            conn=async_session, query="SELECT name FROM test_table", batch_size=2
         )
-        
+
         assert paginator.get_total_count() == 4
 
 
@@ -321,9 +292,9 @@ async def test_generator_with_count(async_session_factory):
         paginator = TablePaginator(
             conn=async_session, query="SELECT name FROM test_table", batch_size=2
         )
-        
+
         batch = next(paginator._paginated_query_sync())
-        assert batch == [('Alice', ), ('Bob', )]
+        assert batch == [("Alice",), ("Bob",)]
         assert paginator.total_count == 4
 
 
@@ -345,9 +316,7 @@ async def test_get_total_count_async(async_session_factory):
     async for async_session in async_session_factory:  # Use the session factory
         # Prepare the paginator
         paginator = TablePaginator(
-            conn=async_session,
-            query="SELECT name FROM test_table",
-            batch_size=2
+            conn=async_session, query="SELECT name FROM test_table", batch_size=2
         )
 
         # Perform the total count query asynchronously
@@ -359,7 +328,7 @@ async def test_get_total_count_async(async_session_factory):
 
 def test_validate_sql_syntax_max_length():
     # Test case for exceeding maximum length
-    long_query = 'SELECT * FROM my_table WHERE ' + 'a' * 1001  # 1001 characters long
+    long_query = "SELECT * FROM my_table WHERE " + "a" * 1001  # 1001 characters long
     validator = QueryValidator(long_query)
 
     with pytest.raises(QueryValidationError, match="Query exceeds maximum length."):

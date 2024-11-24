@@ -2,11 +2,8 @@ import pytest
 from pydantic import ValidationError
 from pydantic.networks import AnyUrl
 
-from .conftest import (
-    DatasourceSettingsFactory, 
-    DatabaseSettingsFactory,
-    create_mocked_data_grid
-)
+from .conftest import DatasourceSettingsFactory, DatabaseSettingsFactory, create_mocked_data_grid
+
 
 def test_database_settings_factory():
     """Test the DatabaseSettingsFactory produces valid DatabaseSettings."""
@@ -59,8 +56,7 @@ def test_mocked_data_grid():
     assert len(data_grid.datasources) == 2  # Ensure there are 2 datasources
 
     # Check that the disconnect_all method can be called
-    data_grid.datasources['ds1'].disconnect_all()
-    data_grid.datasources['ds2'].disconnect_all()
-    data_grid.datasources['ds1'].disconnect_all.assert_called_once()
-    data_grid.datasources['ds2'].disconnect_all.assert_called_once()
-
+    data_grid.datasources["ds1"].disconnect_all()
+    data_grid.datasources["ds2"].disconnect_all()
+    data_grid.datasources["ds1"].disconnect_all.assert_called_once()
+    data_grid.datasources["ds2"].disconnect_all.assert_called_once()
