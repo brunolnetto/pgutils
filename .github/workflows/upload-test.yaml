@@ -11,20 +11,13 @@ jobs:
     runs-on: ubuntu-latest
     name: Host Databases, Run Tests, and Upload Coverage Reports
 
-    services:
-      postgres:
-        image: postgres:latest
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: github_actions
-        ports:
-          - 5432:5432
-        # needed because the postgres container does not provide a healthcheck
-        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
-
     steps:
     - uses: actions/checkout@v4
+
+    - name: Setup PostgreSQL
+      uses: tj-actions/install-postgresql@v3
+      with:
+        postgresql-version: 16
 
     # Wait for the databases to be healthy
     - name: Wait for Databases to be Ready
