@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 from pgbase.core import AsyncDatabase, Datasource, DataGrid
 from pgbase.models import DatabaseSettings, DatasourceSettings, TableConstraint, ColumnIndex
-from pgbase.utils import mask_sensitive_data
+from pgbase.utils import mask_sensitive_data, is_entity_name_valid
 
 from .conftest import DatasourceSettingsFactory, DEFAULT_PORT
 
@@ -53,7 +53,7 @@ def test_invalid_pool_size():
 def test_check_database_exists_true(async_database: AsyncDatabase):
     """Test when the AsyncDatabase exists (synchronous)."""
     # Check that the method returned True
-    assert async_database.check_database_exists() is True
+    assert async_database.database_exists() is True
 
 
 def test_check_database_doesnt_exist(database_without_auto_create: AsyncDatabase):
@@ -61,22 +61,22 @@ def test_check_database_doesnt_exist(database_without_auto_create: AsyncDatabase
     db=database_without_auto_create
     
     # Check that the method returned False due to the error
-    db.drop_database_if_exists()
-    assert db.check_database_exists() is False
+    db.drop_database()
+    assert db.database_exists() is False
 
-    assert db.check_database_exists('test_db_') is False
+    assert db.database_exists('test_db_') is False
 
-    db.create_database_if_not_exists()
-    assert db.check_database_exists() is True
+    db.create_database()
+    assert db.database_exists() is True
 
-    db.drop_database_if_exists()
-    assert db.check_database_exists() is False
+    db.drop_database()
+    assert db.database_exists() is False
 
 
 def test_check_database_doesnt_exist_without_db_name(database_without_db_name: AsyncDatabase):
     """Test when an error occurs during the check (synchronous)."""
     # Check that the method returned False due to the error    
-    assert database_without_db_name.check_database_exists() is False
+    assert database_without_db_name.database_exists() is False
 
 
 def test_repr_sync_database(async_database: AsyncDatabase):
@@ -192,7 +192,7 @@ async def test_audit_trigger(async_database: AsyncDatabase, datasource: Datasour
 
 @pytest.mark.asyncio
 async def test_audit_trigger_with_error(async_database: AsyncDatabase):
-    with pytest.raises(ValueError, match='Invalid table name provided.'):
+    with pytest.raises(ValueError, match='Invalid table name'):
         await async_database.add_audit_trigger('invalid table name')
 
 @pytest.mark.asyncio
@@ -402,7 +402,7 @@ def test_is_valid_table_name(async_database: AsyncDatabase, table_name: str, exp
         expected_result (bool): The expected result of the validation (True/False).
     """
     # Assuming `sync_database` has a method _is_valid_table_name
-    assert async_database._is_valid_table_name(table_name) == expected_result
+    assert is_entity_name_valid(table_name, 'table') == expected_result
 
 
 def test_factory_boy_example():

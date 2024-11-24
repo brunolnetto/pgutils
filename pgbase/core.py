@@ -1,12 +1,12 @@
 from typing import AsyncGenerator, Optional, Union, Tuple, Dict, List, Any
 from contextlib import asynccontextmanager
 from logging import getLogger, Logger
-from asyncio import Lock
 from re import match
-import asyncio
-from asyncpg import create_pool, Connection
+from asyncio import Lock, gather
+import inspect
 import psutil
 
+from asyncpg import create_pool, Connection
 from sqlalchemy import DDL
 from sqlalchemy.sql.schema import MetaData
 from sqlalchemy import create_engine, text
@@ -25,7 +25,7 @@ from .models import (
     TablePaginator
 )
 from .utils import (
-    mask_sensitive_data, validate_schema_name, retry_async
+    mask_sensitive_data, validate_entity_name, retry_async
 )
 from .constants import PAGINATION_BATCH_SIZE
 from .models import DatabaseConnection
@@ -317,10 +317,8 @@ class AsyncDatabase(BaseDatabase):
         # Dynamically adjust batch size based on system load
         batch_size = self._adjust_batch_size()
 
-        # Cache the list of indexes using aiocache
-        tasks = []
-
         # Loop over index information
+        tasks = []
         for index_info in indexes:
             schema_name = index_info.schema_name
             column_names = index_info.column_names
@@ -370,11 +368,7 @@ class AsyncDatabase(BaseDatabase):
 
 
     async def schema_exists(self, schema_name):
-        try:
-            validate_schema_name(schema_name)
-        except ValueError:
-            self.logger.error(f'Invalid schema name {schema_name}.')
-            raise
+        validate_entity_name(schema_name, 'schema', self.logger)
 
         query_str = """
             SELECT schema_name FROM information_schema.schemata WHERE schema_name = :table_schema
@@ -474,8 +468,7 @@ class AsyncDatabase(BaseDatabase):
         """Add an audit trigger to the specified table."""
         
         # Validate table names to prevent SQL injection
-        if not self._is_valid_table_name(table_name):
-            raise ValueError("Invalid table name provided.")
+        validate_entity_name(table_name, 'table', self.logger)
 
         audit_table_name = table_name + '_audit'
 
@@ -533,19 +526,14 @@ class AsyncDatabase(BaseDatabase):
         if not await self.schema_exists(schema_name):
             error_message=f"Schema '{schema_name}' does not exist."
             self.logger.error(error_message)
-            raise ValueError(error_message)
 
-        try:
-            query_str = """
-                SELECT table_name 
-                FROM information_schema.tables 
-                WHERE table_schema = :table_schema;
-            """
-            result = await self.execute(query_str, {'table_schema': schema_name})
-            return [table[0] for table in result]
-        except Exception as e:
-            self.logger.error(f"Failed to list tables in schema '{schema_name}': {e}")
-            return []
+        query_str = """
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = :table_schema;
+        """
+        result = await self.execute(query_str, {'table_schema': schema_name})
+        return [table[0] for table in result]
 
 
     # 2. List Schemas
@@ -559,6 +547,10 @@ class AsyncDatabase(BaseDatabase):
     # 3. List Indexes
     async def list_indexes(self,  table_name: str, schema_name: str = 'public') -> List[Any]:
         """List all indexes for a given table."""
+        
+        validate_entity_name(table_name, 'table', self.logger)
+        validate_entity_name(schema_name, 'schema', self.logger)
+        
         sync_query = """
             SELECT indexname FROM pg_indexes 
             WHERE 
@@ -576,6 +568,9 @@ class AsyncDatabase(BaseDatabase):
     # 4. List Views
     async def list_views(self, schema_name='public') -> List[Any]:
         """List all views in the specified schema."""
+
+        validate_entity_name(schema_name, 'schema', self.logger)
+
         sync_query = """
             SELECT table_name 
             FROM information_schema.views 
@@ -596,6 +591,10 @@ class AsyncDatabase(BaseDatabase):
     # 6. List Constraints
     async def list_constraints(self, table_name: str, schema_name: str = 'public') -> List[TableConstraint]:
         """List all constraints for a specified table."""
+
+        validate_entity_name(table_name, 'table', self.logger)
+        validate_entity_name(schema_name, 'schema', self.logger)
+
         sync_query = """
             SELECT
                 tc.constraint_name,
@@ -639,6 +638,9 @@ class AsyncDatabase(BaseDatabase):
     # 7. List Triggers
     async def list_triggers(self, table_name: str, schema_name: str = 'public') -> List[Any]:
         """List all triggers for a specified table."""
+        validate_entity_name(table_name, 'table', self.logger)
+        validate_entity_name(schema_name, 'schema', self.logger)
+
         sync_query = """
             SELECT * 
             FROM information_schema.triggers 
@@ -693,6 +695,9 @@ class AsyncDatabase(BaseDatabase):
     # 11. List Columns
     async def list_columns(self, table_name: str, schema_name: str = 'public') -> List:
         """List all columns for a specified table in the schema."""
+        validate_entity_name(table_name, 'table', self.logger)
+        validate_entity_name(schema_name, 'schema', self.logger)
+
         sync_query = """
             SELECT column_name 
             FROM information_schema.columns 
@@ -767,6 +772,52 @@ class Datasource:
             raise KeyError(f"Database '{name}' not found.")
         return self.databases[name]
 
+    async def _call_database_method_all(self, method_name: str, *args: Any) -> Dict[str, Union[Any, str]]:
+        """
+        Calls a method on all databases and returns the results concurrently.
+
+        Args:
+            method_name (str): The name of the method to call on each database.
+            *args: Arguments to pass to the database method.
+
+        Returns:
+            A dictionary with database names as keys and the result of the method call or an error message.
+        """
+        async def call_method(name: str, db: AsyncDatabase) -> Tuple[str, Union[Any, str]]:
+            """Helper function to call a method on a single database."""
+            self.logger.info(f"Starting {method_name} for database '{name}'")
+            try:
+                # Dynamically get the method from the database instance
+                method = getattr(db, method_name)
+
+                # Ensure the method is callable before attempting to invoke it
+                if not callable(method):
+                    raise AttributeError(f"Method '{method_name}' is not callable on database '{name}'.")
+
+                # Call the method with provided arguments
+                result = await method(*args)
+                self.logger.info(f"{method_name} for database '{name}' succeeded.")
+                return name, result
+            except AttributeError:
+                # Handle cases where the method does not exist
+                error_message = f"Method '{method_name}' not found for database '{name}'."
+                self.logger.error(error_message)
+                return name, error_message
+            except Exception as e:
+                # Log and store the exception for any other errors
+                error_message = f"{method_name} failed for database '{name}': {e}"
+                self.logger.error(error_message)
+                return name, error_message
+
+        # Use asyncio.gather to run the method calls concurrently
+        tasks = [
+            call_method(name, db) for name, db in self.databases.items()
+        ]
+        results = await gather(*tasks)
+
+        # Convert the list of results into a dictionary
+        return dict(results)
+
     async def list_tables(self, database_name: str, table_schema: str):
         """List tables from a specified database or from all databases."""
         return await self._call_database_method(database_name, "list_tables", table_schema)
@@ -836,52 +887,6 @@ class Datasource:
     async def list_extensions(self, database_name: str):
         """List extensions from a specified database."""
         return await self._call_database_method(database_name, "list_extensions")
-
-    async def _call_database_method_all(self, method_name: str, *args: Any) -> Dict[str, Union[Any, str]]:
-        """
-        Calls a method on all databases and returns the results concurrently.
-
-        Args:
-            method_name (str): The name of the method to call on each database.
-            *args: Arguments to pass to the database method.
-
-        Returns:
-            A dictionary with database names as keys and the result of the method call or an error message.
-        """
-        async def call_method(name: str, db: AsyncDatabase) -> Tuple[str, Union[Any, str]]:
-            """Helper function to call a method on a single database."""
-            self.logger.info(f"Starting {method_name} for database '{name}'")
-            try:
-                # Dynamically get the method from the database instance
-                method = getattr(db, method_name)
-
-                # Ensure the method is callable before attempting to invoke it
-                if not callable(method):
-                    raise AttributeError(f"Method '{method_name}' is not callable on database '{name}'.")
-
-                # Call the method with provided arguments
-                result = await method(*args)
-                self.logger.info(f"{method_name} for database '{name}' succeeded.")
-                return name, result
-            except AttributeError:
-                # Handle cases where the method does not exist
-                error_message = f"Method '{method_name}' not found for database '{name}'."
-                self.logger.error(error_message)
-                return name, error_message
-            except Exception as e:
-                # Log and store the exception for any other errors
-                error_message = f"{method_name} failed for database '{name}': {e}"
-                self.logger.error(error_message)
-                return name, error_message
-
-        # Use asyncio.gather to run the method calls concurrently
-        tasks = [
-            call_method(name, db) for name, db in self.databases.items()
-        ]
-        results = await asyncio.gather(*tasks)
-
-        # Convert the list of results into a dictionary
-        return dict(results)
 
     async def health_check_all(self) -> Dict[str, bool]:
         """Performs health checks on all databases."""
