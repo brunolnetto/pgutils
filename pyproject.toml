@@ -21,6 +21,8 @@ dependencies=[
     "pydantic >= 2.9.2",
     'sqlalchemy[asyncio] >= 2.0.35; python_version < "3.2"',
     "factory-boy >= 3.3.1",
+    "mypy>=1.13.0",
+    "pre-commit>=4.0.1",
 ]
 
 [project.optional-dependencies]
@@ -89,6 +91,10 @@ ignore_missing_imports = true
 [tool.ruff]
 src = ["pgbase"]
 line-length = 100
+# Define which linting checks you want to run
+select = ["E", "F", "W", "C", "B"]
+# Enable autofix on certain checks
+fix = true
 target-version = "py311"
 # Exclude a variety of commonly ignored directories.
 exclude = [
