@@ -1,9 +1,9 @@
 from typing import Any, Callable, Optional
 from pydantic import AnyUrl
-import asyncio
+from asyncio import ensure_future, Future, get_event_loop, sleep, run, TimeoutError, wait_for
 from random import uniform
-import logging
-import re
+from logging import getLogger, Logger
+from re import match
 
 from sqlalchemy.engine.url import make_url, URL
 
@@ -52,37 +52,6 @@ def validate_postgresql_uri(uri: str, allow_async: bool = False):
     return uri
 
 
-def is_valid_schema_name(schema_name: str) -> bool:
-    # Schema names should only contain alphanumeric characters or underscores and must not start with a digit.
-    return bool(re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', schema_name))
-
-
-def validate_schema_name(schema_name: str):
-    if not is_valid_schema_name(schema_name):
-        raise ValueError(f"Invalid schema name: {schema_name}")
-
-
-def run_async_method(async_method: Callable, *args, **kwargs) -> Any:
-    """Run an arbitrary asynchronous method in an agnostic way."""
-    # Check if async_method is indeed callable
-    if not callable(async_method):
-        raise ValueError("The provided method must be callable.")
-
-    try:
-        # Get the current event loop
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            
-            # If the event loop is running, create a task for it
-            return asyncio.ensure_future(async_method(*args, **kwargs))
-        else:
-            # If no running loop, use asyncio.run for synchronous environments
-            return loop.run_until_complete(async_method(*args, **kwargs))
-    except RuntimeError:
-        # If there's no event loop, we can create a new one and run the async method
-        return asyncio.run(async_method(*args, **kwargs))
-
-
 def mask_sensitive_data(uri: URL) -> str:
     replaced_uri=uri._replace(password="******", username="******")
     return str(replaced_uri)
@@ -120,13 +89,13 @@ def get_jitter(attempt: int, has_jitter: bool, delay_factor: float, max_delay: f
 
 
 async def retry_async(
-    action: Callable[[], asyncio.Future],
+    action: Callable[[], Future],
     max_retries: int = 3,
     timeout: Optional[int] = DEFAULT_RETRY_TIMEOUT_S,
     delay_factor: float = 2.0,
     max_delay: Optional[int] = DEFAULT_RETRY_TIMEOUT_S,
     jitter: bool = True,
-    logger: Optional[logging.Logger] = None
+    logger: Optional[Logger] = None
 ) -> bool:
     """
     Retries an asynchronous action with exponential backoff and optional jitter.
@@ -141,25 +110,67 @@ async def retry_async(
     Returns:
         - The result of the action if successful, or False if all retries fail.
     """ 
-    if logger is None:
-        logger = logging.getLogger("retry_async")
+    
+    logger = logger or getLogger("retry_async")
 
     attempt = 0
     while attempt < max_retries:
         attempt += 1
         try:
-            result = await asyncio.wait_for(action(), timeout=timeout)
+            result = await wait_for(action(), timeout=timeout)
             logger.info(f"Action succeeded on attempt {attempt}")
             return result
         except Exception as e:
-            if isinstance(e, asyncio.TimeoutError):
+            if isinstance(e, TimeoutError):
                 logger.warning(f"Timeout on attempt {attempt}: {str(e)}")
             else:
                 logger.error(f"Error on attempt {attempt}: {str(e)}")
 
         wait_time = get_jitter(attempt, jitter, delay_factor, max_delay)
         logger.info(f"Retrying in {wait_time:.2f} seconds...")
-        await asyncio.sleep(wait_time)
+        await sleep(wait_time)
 
     logger.error("All retry attempts failed.")
     return False
+
+RESERVED_KEYWORDS = {
+    "SELECT", "INSERT", "DELETE", "UPDATE", "DROP", "CREATE", "FROM", "WHERE", "JOIN", "TABLE", "INDEX"
+}
+
+def is_entity_name_valid(entity_name: str, entity_category: str, logger: Optional[Logger] = None) -> bool:
+    """Validate entity name against SQL injection, reserved keywords, and special characters."""
+    logger = logger or getLogger("entity_name_validator")
+
+    # Ensure it starts with a letter or underscore and only contains valid characters
+    pattern = r'^[A-Za-z_][A-Za-z0-9_]*$'
+    is_valid = match(pattern, entity_name) is not None
+
+    upper_table_name = entity_name.upper()
+
+    # Check if table name is exactly a reserved keyword
+    if is_valid:
+        if upper_table_name in RESERVED_KEYWORDS:
+            logger.warning(f"Invalid {entity_category} name attempted: '{entity_name}' (reserved keyword)")
+            is_valid = False
+
+    # Ensure the name is not composed entirely of special characters
+    valid_table_pattern=r"^[^a-zA-Z0-9]+$"
+    if is_valid and match(valid_table_pattern, entity_name):
+        logger.warning(f"Invalid {entity_category} name attempted: '{entity_name}' (special characters only)")
+        is_valid = False
+
+    # Log detailed reasons for failure
+    if not is_valid:
+        if not entity_name.strip():
+            logger.warning(f"Invalid {entity_category} name attempted: '{entity_name}' (empty or whitespace)")
+        elif match(valid_table_pattern, entity_name):
+            logger.warning(f"Invalid {entity_category} name attempted: '{entity_name}' (special characters only)")
+        elif upper_table_name in RESERVED_KEYWORDS:
+            logger.warning(f"Invalid {entity_category} name attempted: '{entity_name}' (reserved keyword)")
+
+    return is_valid
+
+
+def validate_entity_name(entity_name: str, entity_category: str, logger: Optional[Logger] = None):
+    if not is_entity_name_valid(entity_name, entity_category, logger):
+        raise ValueError(f"Invalid {entity_category} name: \'{entity_name}\'")

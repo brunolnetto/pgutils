@@ -1,4 +1,4 @@
-from typing import Dict, List, Any, Optional, Generator, AsyncGenerator, Union
+from typing import Dict, List, Any, ClassVar, Optional, Generator, AsyncGenerator, Union
 from typing_extensions import Self
 from pydantic import BaseModel
 import warnings
@@ -18,8 +18,7 @@ from sqlalchemy.orm import Session
 from .utils import (
     validate_postgresql_uri, 
     construct_admin_uri,
-    construct_complete_uri, 
-    run_async_method
+    construct_complete_uri
 )
 from .constants import (
     PAGINATION_BATCH_SIZE,
@@ -44,6 +43,9 @@ DEFAULT_MAX_OVERFLOW = 10
 
 DEFAULT_MIN_LENGTH = 1
 DEFAULT_MINIMUM_PASSWORD_SIZE = 1
+
+MAX_RETRIES=3
+DEFAULT_CONNECTION_TIMEOUT_S=30
 
 
 class QueryValidationError(Exception):
@@ -101,31 +103,32 @@ class DatabaseSettings(BaseModel):
 class DatasourceSettings(BaseModel):
     """Configuration settings for a DataSource."""
     name: str
-    admin_username: str = Field(
-        default=DEFAULT_ADMIN_USERNAME, min_length=DEFAULT_MIN_LENGTH
-    )
+    description: Optional[str] = None                   # Optional field for a description of the data source
+    admin_username: str = Field(default=DEFAULT_ADMIN_USERNAME, min_length=DEFAULT_MIN_LENGTH)
     admin_password: str = Field(
         default=DEFAULT_ADMIN_PASSWORD,  min_length=DEFAULT_MINIMUM_PASSWORD_SIZE
     )
     databases: List[DatabaseSettings]                   # List of databases in the data source
-    description: Optional[str] = None                   # Optional field for a description of the data source
-    connection_timeout: int = Field(default=30, ge=0)   # Timeout for connections in seconds
-    retry_attempts: int = Field(default=3, ge=0)        # Number of attempts to connect to the database
-
-    @field_validator('databases')
-    def validate_databases(cls, databases: List[DatabaseSettings]) -> List[DatabaseSettings]:
-        """Validates that all databases are properly configured."""
-        # Ensure that there is at least one database
-        if not databases:
-            raise ValueError("At least one database must be defined.")
-
-        return databases
+    connection_timeout: int = Field(default=DEFAULT_CONNECTION_TIMEOUT_S, ge=0)   # Timeout for connections in seconds
+    retry_attempts: int = Field(default=MAX_RETRIES, ge=0)        # Number of attempts to connect to the database
 
     def __repr__(self):
         return f"<DataSourceSettings(name={self.name}, databases={len(self.databases)})>"
 
 
 class ColumnIndex(BaseModel):
+    INDEX_TYPES: ClassVar[dict] = {
+        'btree': "Default index type. Suitable for equality and range queries on ordered data.",
+        'gin': "Generalized Inverted Index. Ideal for columns with many values, such as full-text search or JSONB data.",
+        'gist': "Generalized Search Tree. Useful for complex data types like geometrical or full-text search.",
+        'spgist': "Space-partitioned GiST. Useful for irregular data like spatial or hierarchical structures.",
+        'brin': "Block Range Index. Efficient for very large tables where data is naturally ordered.",
+        'hash': "Hash-based index. Optimized for equality queries, but less commonly used as btree often performs better.",
+        'expression': "Index based on an expression or function rather than a direct column value.",
+        'partial': "Index that applies only to a subset of rows, based on a condition.",
+    }
+
+    
     schema_name: str = 'public'
     table_name: str
     column_names: List[str]
@@ -284,7 +287,7 @@ class TablePaginator:
         validator.validate()
 
     async def get_total_count(self) -> int:
-        """Fetch the total count using the run_async_method utility."""
+        """Fetch the total count"""
         count_query = f"SELECT COUNT(1) FROM ({self.query}) as total"
         result = await self.conn.execute(text(count_query).bindparams(**self.params))
         return result.scalar()
@@ -320,8 +323,3 @@ class TablePaginator:
             yield batch
             self.current_offset += self.batch_size
 
-    def fetch_total_count(self) -> int:
-        """Fetch the total count using the run_async_method utility."""
-        if isinstance(self.conn, AsyncDatabaseInteraction):
-            return run_async_method(self._get_total_count_async)
-        return self.get_total_count()
