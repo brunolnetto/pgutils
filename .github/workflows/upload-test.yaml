@@ -1,4 +1,4 @@
-name: CI Workflow
+name: Test Workflow
 
 on:
   push:
@@ -18,15 +18,6 @@ jobs:
       uses: tj-actions/install-postgresql@v3
       with:
         postgresql-version: 16
-
-    # Wait for the databases to be healthy
-    - name: Wait for Databases to be Ready
-      run: |
-        for port in 5432; do
-          until nc -z localhost $port; do
-            sleep 1 # wait for 1 second before checking again
-          done
-        done
 
     #----------------------------------------------
     #       Install Python
@@ -50,19 +41,12 @@ jobs:
     - name: Install the project
       run: uv sync --all-extras --dev
 
-    - name: Run docker process to check for containers
-      run: docker ps -a
-
     # Run tests and generate coverage report
     - name: Run Tests with Coverage
       run: |
         uv run pytest --cov=pgbase tests/
         mkdir -p coverage-reports
         mv .coverage coverage-reports/coverage.xml
-
-    # Stop and remove the containers after tests
-    - name: Stop Docker Containers
-      run: docker-compose -f docker-compose.yaml down
 
     # Upload Coverage Report to Codecov
     - name: Upload Coverage Reports to Codecov
