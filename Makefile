@@ -95,16 +95,20 @@ watch-test: ## Runs tests on watchdog mode
 
 
 lint: clean ## Performs inplace lint fixes
-	uv run ruff check --fix .
+	uv run ruff check --fix pgbase/
 
 
-cov: clean ## Test coverages the source code 
+cov: clean ## Test coverages the source code
 	uv run coverage run --source "$$PACKAGE_NAME" --omit "tests/*,*/__init__.py" -m pytest --durations=10
 	uv run coverage report -m
 
 
 watch-cov: clean ## Checks code coverage quickly with the default Python
 	find . -name '*.py' | entr -c make cov
+
+
+watch-pre-commit: ## Runs pre-commit on python files
+	find . -name '*.py' | entr -c pre-commit run --all-files
 
 
 install: clean ## Installs the python requirements. Usage: make install
@@ -122,7 +126,6 @@ what: ## Lists all commits made since the last release commit with a tag pattern
 	fi
 
 
-
 check-bump: ## Validates the version bump type
 	@if [ -z "$(v)" ]; then \
 		echo "Error: Missing version bump type. Use: make bump v={patch|minor|major}"; \
@@ -134,6 +137,7 @@ check-bump: ## Validates the version bump type
 		echo "Error: Invalid version bump type '$(v)'. Valid types are: $$VALID_BUMPS."; \
 		exit 1; \
 	fi
+
 
 version: ## Echoes the package version
 	@echo $$(grep '^version =' pyproject.toml | awk '{print $$3}' | tr -d '"')
@@ -212,7 +216,7 @@ bump: ## Bumps version to user-provided {patch|minor|major} semantic version
 	@git commit -m "release: tag v$$NEW_VERSION"; \
 	git tag "v$$NEW_VERSION"; \
 	git push; \
-	echo "Version bumped 
+	echo "Version bumped
 	git push --tagsto $$NEW_VERSION"
 
 
