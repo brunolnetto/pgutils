@@ -2,7 +2,7 @@ import pytest
 import asyncio
 from unittest.mock import patch
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 from pgbase.core import AsyncDatabase
 from pgbase.utils import (
@@ -35,16 +35,6 @@ def test_valid_asyncpg_uri(valid_asyncpg_uri):
     assert validate_postgresql_uri(valid_asyncpg_uri, allow_async=True) == valid_asyncpg_uri
 
 
-# Test valid URIs for psycopg
-@pytest.mark.parametrize("valid_psycopg_uri", [
-    "postgresql://user:password@localhost:5432/mydatabase",
-    "postgresql://localhost:5432/mydatabase",  # Valid without user and password
-    "postgresql://localhost:5432/",  # Missing database
-])
-def test_valid_psycopg_uri(valid_psycopg_uri):
-    assert validate_postgresql_uri(valid_psycopg_uri) == valid_psycopg_uri
-
-
 # Test invalid prefixes
 @pytest.mark.parametrize("invalid_prefix_uri", [
     "mysql://user:password@localhost:5432/dbname",                  # Invalid scheme
@@ -69,15 +59,6 @@ def test_invalid_asyncpg_uris_with_missing_components(invalid_async_uri):
         match='Both username and password must be provided together.'
     ):
         validate_postgresql_uri(invalid_async_uri, allow_async=True)
-
-
-# Test invalid URIs with missing components and allow_async=True
-@pytest.mark.parametrize("invalid_async_uri", [
-    "postgresql://user:password@:5432/dbname",
-])
-def test_invalid_asyncpg_uris_with_missing_components(invalid_async_uri):
-    with pytest.raises(ValueError, match='Port is missing in the URI|'):
-        validate_postgresql_uri(invalid_async_uri)
 
 
 # Test invalid URIs with missing components

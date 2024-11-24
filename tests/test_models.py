@@ -45,7 +45,7 @@ def test_database_config_invalid_pool_size():
     assert 'should be greater than 0' in str(excinfo.value)
 
 
-def test_database_config_invalid_pool_size():
+def test_database_config_invalid_url():
     with pytest.raises(ValidationError) as excinfo:
         DatabaseSettings(
             uri='mysql://user:password@localhost:5432/mydatabase',
@@ -56,17 +56,6 @@ def test_database_config_invalid_pool_size():
 
     assert 'URI must start with' in str(excinfo.value)
 
-
-def test_database_config_invalid_pool_size():
-    with pytest.raises(ValidationError) as excinfo:
-        DatabaseSettings(
-            uri='postgresql://user:password@localhost:5432/mydatabase',
-            admin_username='admin',
-            admin_password='strongpassword',
-            pool_size=-1
-        )
-
-    assert 'should be greater than 0' in str(excinfo.value)
 
 def test_empty_datasource_settings():
     with pytest.raises(ValidationError) as excinfo:
@@ -297,7 +286,7 @@ async def test_paginator_with_params(async_session_factory):
 async def test_sync_paginator_batches(async_session_factory):
     async for async_session in async_session_factory:
         paginator = TablePaginator(
-            conn=session,
+            conn=async_session,
             query="SELECT name FROM public.test_table",
             batch_size=2
         )

@@ -11,7 +11,7 @@ from pydantic import (
     Field 
 )
 from sqlalchemy import text
-from sqlalchemy.engine import Result, Connection
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 from sqlalchemy.orm import Session
 

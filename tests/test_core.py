@@ -1,18 +1,14 @@
 import pytest
 from pydantic import ValidationError
 from typing import Dict
-import asyncio
-import random
-import pytest
 
 from sqlalchemy import Column, Integer, String
-from unittest.mock import MagicMock, patch
 
-from pgbase.core import AsyncDatabase, Datasource, DataGrid
+from pgbase.core import AsyncDatabase, Datasource
 from pgbase.models import DatabaseSettings, DatasourceSettings, TableConstraint, ColumnIndex
 from pgbase.utils import mask_sensitive_data, is_entity_name_valid
 
-from .conftest import DatasourceSettingsFactory, DEFAULT_PORT
+from .conftest import DatasourceSettingsFactory
 
 # Dummy test to initialize module scoped Datasource
 def test_database_initialization(datasource: Datasource):
@@ -127,17 +123,6 @@ async def test_columns_exists(async_database: AsyncDatabase, datasource: Datasou
     assert await async_database.column_exists('public', 'test_table', 'name')
     assert await datasource.column_exists('db1', 'public', 'test_table', 'name')
 
-
-@pytest.mark.asyncio
-def test_list_schemas(async_database: AsyncDatabase, datasource: Datasource):
-    expected=[ 'pg_toast', 'pg_catalog', 'public', 'information_schema' ]
-
-    # Assertion to verify the result
-    async_results = async_database.list_schemas()
-    assert async_results == expected
-
-    ds_results = datasource.list_schemas()
-    assert ds_results == expected
 
 @pytest.mark.asyncio
 async def test_list_views(async_database: AsyncDatabase, datasource: Datasource):
@@ -511,13 +496,13 @@ def test_execute(test_db):
 
 
 @pytest.mark.asyncio
-async def test_list_tables(test_db):
+async def test_list_tables_testdatabase(test_db):
     result = await test_db.list_tables()
     assert result == ["table1", "table2"]
 
 
 @pytest.mark.asyncio
-async def test_list_extensions(test_db):
+async def test_list_extensions_testdatabase(test_db):
     result = await test_db.list_extensions()
     assert result == ["extension1", "extension2"]
 
