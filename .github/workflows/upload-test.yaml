@@ -42,6 +42,11 @@ jobs:
       run: |
         docker-compose -f ./docker-compose.yaml up -d
 
+    - name: Build and Start Docker Containers
+      run: |
+        docker-compose logs db1
+        docker-compose logs db2
+
     # Wait for the databases to be healthy
     - name: Wait for Databases to be Ready
       run: |
