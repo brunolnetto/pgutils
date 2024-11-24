@@ -1,6 +1,11 @@
 [run]
 branch = True
-source = pgutils
+source = pgbase
 
 [report]
 show_missing = True
+exclude_lines =
+    # Don't report these lines
+    pragma: no cover
+    if __name__ == .__main__.:
+    @abstractmethod

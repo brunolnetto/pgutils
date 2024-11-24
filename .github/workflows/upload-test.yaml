@@ -41,12 +41,12 @@ jobs:
     - name: Build and Start Docker Containers
       run: |
         docker-compose -f ./docker-compose.yaml up -d
-    
+
     # Wait for the databases to be healthy
     - name: Wait for Databases to be Ready
       run: |
         for port in 5432 5433; do
-          until nc -z localhost $port; do   
+          until nc -z localhost $port; do
             sleep 1 # wait for 1 second before checking again
           done
         done
@@ -92,7 +92,7 @@ jobs:
     # Run tests and generate coverage report
     - name: Run Tests with Coverage
       run: |
-        poetry run pytest --cov=pgutils tests/
+        poetry run pytest --cov=pgbase tests/
         # Save coverage report to a specific file
         mkdir -p coverage-reports
         mv .coverage coverage-reports/coverage.xml
