@@ -41,12 +41,12 @@ jobs:
     - name: Build and Start Docker Containers
       run: |
         docker-compose -f ./docker-compose.yaml up -d
-    
+
     # Wait for the databases to be healthy
     - name: Wait for Databases to be Ready
       run: |
         for port in 5432 5433; do
-          until nc -z localhost $port; do   
+          until nc -z localhost $port; do
             sleep 1 # wait for 1 second before checking again
           done
         done
