@@ -400,10 +400,7 @@ source = { editable = "." }
 dependencies = [
     { name = "anyio" },
     { name = "asyncpg" },
-    { name = "factory-boy" },
-    { name = "mypy" },
     { name = "ping3" },
-    { name = "pre-commit" },
     { name = "psutil" },
     { name = "psycopg" },
     { name = "psycopg2-binary" },
@@ -414,6 +411,8 @@ dependencies = [
 
 [package.optional-dependencies]
 lint = [
+    { name = "mypy" },
+    { name = "pre-commit" },
     { name = "ruff" },
 ]
 tests = [
@@ -429,11 +428,10 @@ tests = [
 requires-dist = [
     { name = "anyio", specifier = ">=4.6.2.post1" },
     { name = "asyncpg", specifier = ">=0.30.0" },
-    { name = "factory-boy", specifier = ">=3.3.1" },
     { name = "factory-boy", marker = "extra == 'tests'", specifier = ">=3.3.1" },
-    { name = "mypy", specifier = ">=1.13.0" },
+    { name = "mypy", marker = "extra == 'lint'", specifier = ">=1.13.0" },
     { name = "ping3", specifier = ">=4.0.8" },
-    { name = "pre-commit", specifier = ">=4.0.1" },
+    { name = "pre-commit", marker = "extra == 'lint'", specifier = ">=4.0.1" },
     { name = "psutil", specifier = ">=6.1.0" },
     { name = "psycopg", specifier = ">=3.2.3" },
     { name = "psycopg2-binary", specifier = ">=2.9.9" },
@@ -445,7 +443,6 @@ requires-dist = [
     { name = "pytest-watch", marker = "extra == 'tests'", specifier = ">=4.2.0" },
     { name = "ruff", marker = "extra == 'lint'", specifier = ">=0.7.4" },
     { name = "sqlalchemy", specifier = ">=2.0.36" },
-    { name = "sqlalchemy", extras = ["asyncio"], marker = "python_full_version < '3.2'", specifier = ">=2.0.35" },
     { name = "types-psutil", specifier = ">=6.1.0.20241102" },
 ]
 
