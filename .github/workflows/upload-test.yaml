@@ -11,54 +11,33 @@ jobs:
     runs-on: ubuntu-latest
     name: Host Databases, Run Tests, and Upload Coverage Reports
 
+    services:
+      postgres:
+        image: postgres:latest
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: github_actions
+        ports:
+          - 5432:5432
+        # needed because the postgres container does not provide a healthcheck
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+
     steps:
     - uses: actions/checkout@v4
-
-    # Install Docker
-    - name: Install Docker
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
-        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-        sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
-        sudo apt-get update
-        sudo apt-get install -y docker-ce
-
-    # Install Docker Compose
-    - name: Install Docker Compose
-      run: |
-        DOCKER_COMPOSE_VERSION=1.29.2  # Specify the desired version
-        sudo curl -L "https://github.com/docker/compose/releases/download/$DOCKER_COMPOSE_VERSION/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-        sudo chmod +x /usr/local/bin/docker-compose
-
-
-    # Verify installations
-    - name: Verify Docker and Docker Compose Installation
-      run: |
-        docker --version
-        docker-compose --version
-
-    - name: Build and Start Docker Containers
-      run: |
-        docker-compose -f ./docker-compose.yaml up -d
-
-    - name: Build and Start Docker Containers
-      run: |
-        docker-compose logs db1
-        docker-compose logs db2
 
     # Wait for the databases to be healthy
     - name: Wait for Databases to be Ready
       run: |
-        for port in 5432 5433; do
+        for port in 5432; do
           until nc -z localhost $port; do
             sleep 1 # wait for 1 second before checking again
           done
         done
 
-    - name: Run docker process to check for containers
-      run: docker ps -a
-
+    #----------------------------------------------
+    #       Install Python
+    #----------------------------------------------
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
@@ -70,7 +49,6 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v3
       with:
-        # Install a specific version of uv.
         version: "0.5.1"
 
     - name: Set up Python
@@ -82,14 +60,10 @@ jobs:
     - name: Run docker process to check for containers
       run: docker ps -a
 
-    - name: Run docker compose logs
-      run: docker compose logs
-
     # Run tests and generate coverage report
     - name: Run Tests with Coverage
       run: |
         uv run pytest --cov=pgbase tests/
-        # Save coverage report to a specific file
         mkdir -p coverage-reports
         mv .coverage coverage-reports/coverage.xml
 
