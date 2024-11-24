@@ -22,7 +22,6 @@ from .utils import (
 )
 from .constants import (
     PAGINATION_BATCH_SIZE,
-    DEFAULT_HEALTHCHECK_TIMEOUT_S,
     VALID_INDEX_TYPES,
     VALID_SCHEMES,
 )
