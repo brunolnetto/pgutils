@@ -309,10 +309,6 @@ class TablePaginator:
         count_query = f"SELECT COUNT(1) FROM ({self.query}) as total"
         result = await self.conn.execute(text(count_query).bindparams(**self.params))
 
-        # Ensure the result is handled properly if it's an awaitable or result object
-        if isinstance(result, Coroutine):
-            result = await result
-
         return result.scalar()
 
     def _get_batch_query(self) -> str:
@@ -328,15 +324,7 @@ class TablePaginator:
         result = await self.conn.execute(batch_query)
         return result.fetchall()
 
-    async def _paginated_query_async(self) -> AsyncPageGenerator:
-        """Asynchronous generator to fetch results batch by batch."""
-        self.total_count = await self.get_total_count()
 
-        if self.total_count is not None:
-            while self.current_offset < self.total_count:
-                batch = await self._fetch_batch_async()
-                yield batch
-                self.current_offset += self.batch_size
 
     async def paginate(self) -> PageGenerator:
         """Unified paginate method to handle both sync and async queries."""

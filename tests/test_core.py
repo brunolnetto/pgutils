@@ -279,7 +279,11 @@ async def test_list_tables(async_database: AsyncDatabase, datasource: Datasource
     assert (
         "test_table" in ds_db2_tables
     ), "test_table should be listed in the async AsyncDatabase tables."
+    
+    with pytest.raises(ValueError) as exc:
+        await async_database.list_tables('inexistent_schema')
 
+    assert "Schema 'inexistent_schema' does not exist." in str(exc.value)
 
 @pytest.mark.asyncio
 async def test_create_indexes_async(async_database: AsyncDatabase):

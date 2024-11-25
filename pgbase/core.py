@@ -511,7 +511,7 @@ class AsyncDatabase(BaseDatabase):
     ) -> AsyncGenerator:
         """Unified paginate interface for synchronous and asynchronous queries."""
         paginator = TablePaginator(conn, query, params=params, batch_size=batch_size)
-        async for page in paginator._paginated_query_async():
+        async for page in paginator.paginate():
             yield page
 
     # 1. List tables
@@ -520,6 +520,7 @@ class AsyncDatabase(BaseDatabase):
         if not await self.schema_exists(schema_name):
             error_message = f"Schema '{schema_name}' does not exist."
             self.logger.error(error_message)
+            raise ValueError(error_message)
 
         query_str = """
             SELECT table_name

@@ -59,14 +59,12 @@ def mask_sensitive_data(uri: URL) -> str:
 
 
 def construct_uri(
-    drivername: str, username: str, password: str, host: str, port: int, database: str
+    drivername: str, username: str, password: str, host: str, port: int, database: str = ''
 ) -> AnyUrl:
     """
     Constructs a PostgreSQL URI from the provided components, excluding slash
     if the database is empty.
     """
-    if not all([drivername, username, password, host, port]):
-        raise ValueError("All connection parameters except 'database' must be provided.")
 
     # Use make_url to ensure proper URI construction
     database_part = f"/{database}" if database else ""

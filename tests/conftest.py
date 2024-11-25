@@ -14,7 +14,7 @@ from pgbase.core import AsyncDatabase, Datasource, DataGrid
 from pgbase.models import DatabaseSettings, DatasourceSettings, ColumnIndex
 from tests.testing import prepare_database
 
-DEFAULT_PORT = 5432
+DEFAULT_PORT = 5433
 
 # Database configuration constants
 DB_NAME = "mydb"
@@ -84,6 +84,18 @@ def sync_settings_without_db_name():
 
 
 @pytest.fixture(scope="function")
+def mock_logger():
+    """Fixture for mocking a logger."""
+    return MagicMock()
+
+class LoggerMock:
+    def __init__(self):
+        self.info = MagicMock()
+        self.error = MagicMock()
+        self.warning = MagicMock()
+
+
+@pytest.fixture(scope="function")
 def database_without_db_name(sync_settings_without_db_name):
     db = AsyncDatabase(sync_settings_without_db_name)
     yield db
@@ -97,7 +109,7 @@ def database_without_auto_create(async_settings_without_auto_create):
 
 @pytest.fixture(scope="function")
 def async_database(databases_settings):
-    db = AsyncDatabase(databases_settings["db1"])
+    db = AsyncDatabase(databases_settings["db1"], )
     yield db
 
 
@@ -161,18 +173,6 @@ async def async_session_factory():
     # Ensure engine disposal after the session is done
     await async_engine.dispose()
 
-
-@pytest.fixture(scope="function")
-def mock_logger():
-    """Fixture for mocking a logger."""
-    return MagicMock()
-
-
-class LoggerMock:
-    def __init__(self):
-        self.info = MagicMock()
-        self.error = MagicMock()
-        self.warning = MagicMock()
 
 
 class DatabaseSettingsFactory(factory.Factory):
