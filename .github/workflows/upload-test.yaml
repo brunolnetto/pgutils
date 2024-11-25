@@ -50,29 +50,44 @@ jobs:
     - name: Initialize Database
       run: |
         docker exec -i postgres-db psql -U postgres <<EOF
-        CREATE DATABASE "postgres-local";
-        GRANT ALL PRIVILEGES ON DATABASE "postgres-local" TO postgres;
+        ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO postgres;
+        ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO postgres;
+        ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL PRIVILEGES ON FUNCTIONS TO postgres;
         ALTER USER postgres WITH PASSWORD 'postgres';
         EOF
 
-    # Additional CI steps go here (e.g., tests, coverage)
+    #----------------------------------------------
+    #       Install Python
+    #----------------------------------------------
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.9'
 
-    - name: Install and configure Poetry
-      uses: snok/install-poetry@v1
+    #----------------------------------------------
+    #       install & configure uv
+    #----------------------------------------------
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
       with:
-        virtualenvs-create: true
-        virtualenvs-in-project: true
+        version: "0.5.1"
 
-    # Install dependencies and run tests
-    - name: Install dependencies and Run Tests
+    - name: Set up Python
+      run: uv python install
+
+    - name: Install the project
+      run: uv sync --all-extras --dev
+
+    # Run tests and generate coverage report
+    - name: Run Tests with Coverage
       run: |
-        poetry install --verbose --no-interaction
-        poetry run pytest --cov=pgbase tests/
+        uv run pytest --cov=pgbase tests/
+        mkdir -p coverage-reports
+        mv .coverage coverage-reports/coverage.xml
 
-    # Stop and clean up the database container
-    - name: Stop Docker Containers
-      run: docker-compose -f docker-compose.yaml down
+    # Upload Coverage Report to Codecov
+    - name: Upload Coverage Reports to Codecov
+      run: |
+        curl -Os https://uploader.codecov.io/latest/linux/codecov
+        chmod +x codecov
+        ./codecov -t ${{ secrets.CODECOV_TOKEN }} -f coverage-reports/coverage.xml
