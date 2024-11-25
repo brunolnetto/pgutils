@@ -21,6 +21,9 @@ dependencies=[
     "pydantic >= 2.9.2",
     "sqlalchemy>=2.0.36",
     "types-psutil>=6.1.0.20241102",
+    "pytest-cov>=6.0.0",
+    "factory-boy>=3.3.1",
+    "pytest-asyncio>=0.24.0",
 ]
 
 [project.optional-dependencies]
