@@ -99,7 +99,7 @@ lint: clean ## Performs inplace lint fixes
 
 
 cov: clean ## Test coverages the source code
-	uv run coverage run --source "$$PACKAGE_NAME" --omit "tests/*,*/__init__.py" -m pytest --durations=10
+	uv run coverage run --source "$$PACKAGE_NAME" --omit "tests/*,*/__init__.py" -m pytest --cov --durations=10
 	uv run coverage report -m
 
 

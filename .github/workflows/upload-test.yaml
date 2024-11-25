@@ -81,7 +81,7 @@ jobs:
     # Run tests and generate coverage report
     - name: Run Tests with Coverage
       run: |
-        uv run pytest --cov=pgbase tests/
+        uv run pytest --cov=pgbase --cov --cov-report=xml tests/
         mkdir -p coverage-reports
         mv .coverage coverage-reports/coverage.xml
 
@@ -90,4 +90,4 @@ jobs:
       run: |
         curl -Os https://uploader.codecov.io/latest/linux/codecov
         chmod +x codecov
-        ./codecov -t ${{ secrets.CODECOV_TOKEN }} -f coverage-reports/coverage.xml
+        ./codecov -t ${{ secrets.CODECOV_TOKEN }} -f coverage.xml
