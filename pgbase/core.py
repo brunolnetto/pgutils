@@ -58,7 +58,17 @@ class AsyncDatabase(BaseDatabase):
 
     async def init(self):
         await self.__init_pool()
-        await self.create_database(self.settings.name)
+        
+        db_name = self.settings.name
+        
+        if not db_name:
+            cause="No database name provided or configured"
+            reason="skipping database creation"
+            message=f"{cause}, therefore {reason}."
+            self.logger.warning(message)
+            return
+
+        self.create_database(self.settings.name)
 
     async def __init_pool(self):
         """
@@ -369,17 +379,25 @@ class AsyncDatabase(BaseDatabase):
 
     async def check_active_connections(self) -> bool:
         """Checks if there are active connections in the database."""
-        query = "SELECT COUNT(*) FROM pg_stat_activity WHERE state = 'active'"
-        result = await self.execute(query)  # Execute the raw SQL query
-        active_connections = result[0]["count"]  # Access the count from the first row
-        return active_connections > 0
+        query = "SELECT 1 FROM pg_stat_activity WHERE state = 'active' LIMIT 1"
+        try:
+            result = await self.execute(query)
+            # Check if we received at least one row
+            return bool(result)
+        except Exception as e:
+            self.logger.error(f"Error checking active connections: {e}")
+            return False
 
     async def check_replication_status(self) -> bool:
         """Checks if replication is active in the database (if applicable)."""
-        query = "SELECT COUNT(*) FROM pg_stat_replication WHERE state = 'streaming'"
-        result = await self.execute(query)  # Execute the raw SQL query
-        replication_connections = result[0]["count"]  # Access the count from the first row
-        return replication_connections > 0
+        query = "SELECT 1 FROM pg_stat_replication WHERE state = 'streaming' LIMIT 1"
+        try:
+            result = await self.execute(query)
+            # Check if we received at least one row
+            return bool(result)
+        except Exception as e:
+            self.logger.error(f"Error checking replication status: {e}")
+            return False
 
     async def health_check(
         self,

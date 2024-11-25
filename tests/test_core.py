@@ -1,10 +1,12 @@
 import pytest
-from pydantic import ValidationError
+from unittest.mock import MagicMock, patch, PropertyMock, AsyncMock
 from typing import Dict, List, Set, Any
 
+from pydantic import ValidationError
 from sqlalchemy import Column, Integer, String
+from ping3 import errors
 
-from pgbase.core import AsyncDatabase, Datasource
+from pgbase.core import AsyncDatabase, Datasource, MAX_BATCH_SIZE
 from pgbase.models import DatabaseSettings, DatasourceSettings, TableConstraint, ColumnIndex
 from pgbase.utils import mask_sensitive_data, is_entity_name_valid
 
@@ -36,6 +38,9 @@ async def test_create_and_drop_tables_with_admin(async_database: AsyncDatabase):
     assert (
         await db.health_check(use_admin_uri=True) is True
     ), "Health check after dropping tables should pass."
+
+
+
 
 
 def test_invalid_pool_size():
@@ -305,8 +310,133 @@ async def test_create_indexes_async(async_database: AsyncDatabase):
         await async_database.create_indexes(invalid_indexes)
 
 
+def test_rtt_is_none(mocked_database: AsyncDatabase):
+    # Patch the `ping` method to return None
+    with patch("pgbase.core.ping", return_value=None):
+        result = mocked_database._measure_network_latency("8.8.8.8")
+
+    assert result == float("inf")
+    mocked_database.logger.warning.assert_called_once_with("Failed to measure latency for 8.8.8.8")
+
+
+def test_ping_error(mocked_database: AsyncDatabase):    
+    # Patch the `ping` method to raise `errors.PingError`
+    with patch("pgbase.core.ping", side_effect=errors.PingError("Ping failed")):
+        result = mocked_database._measure_network_latency("8.8.8.8")
+
+    assert result == float("inf")
+
+    warn_message="Ping error when measuring latency to 8.8.8.8: Ping failed"
+    mocked_database.logger.error.assert_called_once_with(warn_message)
+
+
+@pytest.mark.asyncio
+async def test_database_init_without_db_name(mocked_database: AsyncDatabase):
+    # Patch the `ping` method to return None
+    with \
+        patch.object(mocked_database, "create_database", return_value=True), \
+        patch.object(type(mocked_database.settings), "name", new_callable=PropertyMock) as mock_name, \
+        patch.object(mocked_database.logger, "warning") as mock_warning:
+
+        # Set the mocked value of `settings.name`
+        mock_name.return_value = ""
+
+        await mocked_database.init()
+
+        # Check if the warning message was logged
+        cause = "No database name provided or configured"
+        reason = "skipping database creation"
+        message = f"{cause}, therefore {reason}."
+        mock_warning.assert_called_once_with(message)
+        
+
+@pytest.mark.asyncio
+async def test_database_init_with_db_name(mocked_database: AsyncDatabase):
+    # Patch the `ping` method to return None
+    with \
+        patch.object(mocked_database, "create_database", return_value=True), \
+        patch.object(type(mocked_database.settings), "name", new_callable=PropertyMock) as mock_name, \
+        patch.object(mocked_database.logger, "warning") as mock_warning:
+
+        # Set the mocked value of `settings.name` to a valid name
+        mock_name.return_value = "mock_db"
+
+        # Call the `init` method
+        await mocked_database.init()
+
+        # Verify `warning` was NOT called
+        mock_warning.assert_not_called()
+
+        # Verify `create_database` was called with the correct name
+        mocked_database.create_database.assert_called_once_with("mock_db")
+
+@pytest.mark.asyncio
+async def test_get_session_success(mocked_database):
+    # Mock session_maker to return a mock session
+    mock_session = AsyncMock()
+    mocked_database.session_maker = AsyncMock(return_value=mock_session)
+
+    async def mock_session_context():
+        async with mock_session:
+            yield mock_session
+
+    mocked_database.session_maker.side_effect = mock_session_context
+
+    # Use the get_session context manager
+    async with mocked_database.get_session() as session:
+        # Assert the yielded session is the mocked session
+        assert session == mock_session
+
+    # Verify that the session was properly closed
+    mock_session.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_session_with_exception(mocked_database):
+    # Mock session_maker to return a mock session
+    mock_session = AsyncMock()
+    mocked_database.session_maker = AsyncMock(return_value=mock_session)
+
+    async def mock_session_context():
+        async with mock_session:
+            yield mock_session
+
+    mocked_database.session_maker.side_effect = mock_session_context
+
+    # Mock logger
+    with patch.object(mocked_database.logger, "error") as mock_logger:
+        # Simulate an exception while using the session
+        with pytest.raises(ValueError, match="Test exception"):
+            async with mocked_database.get_session() as session:
+                assert session == mock_session
+                raise ValueError("Test exception")
+
+        # Verify that rollback was called
+        mock_session.rollback.assert_awaited_once()
+
+        # Verify that the exception was logged
+        mock_logger.assert_called_once_with(
+            "Session rollback due to exception: Test exception"
+        )
+
+    # Verify that the session was closed
+    mock_session.close.assert_awaited_once()
+
+def test_returns_max_batch_size(mocked_database: AsyncDatabase):
+    # Mock psutil and latency values to ensure load_factor <= LOAD_THRESHOLD
+    with patch("psutil.cpu_percent", return_value=50), \
+         patch("psutil.virtual_memory", return_value=MagicMock(percent=50)), \
+         patch("psutil.disk_usage", return_value=MagicMock(percent=50)), \
+         patch("psutil.net_io_counters"), \
+         patch.object(mocked_database, "_measure_network_latency", return_value=0.5):
+        
+        result = mocked_database._adjust_batch_size()
+        assert result == MAX_BATCH_SIZE
+
+
 @pytest.mark.asyncio
 async def test_list_schemas(async_database: AsyncDatabase, datasource: Datasource):
+    
     async_schemas = await async_database.list_schemas()
 
     expected = ["pg_toast", "pg_catalog", "public", "information_schema"]
