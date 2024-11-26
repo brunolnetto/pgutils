@@ -1,6 +1,7 @@
+from asyncio import Future, sleep, TimeoutError, wait_for, Task, gather
 from typing import Callable, Optional
 from pydantic import AnyUrl
-from asyncio import Future, sleep, TimeoutError, wait_for
+import inspect
 from random import uniform
 from logging import getLogger, Logger
 from re import match
@@ -18,6 +19,40 @@ from .constants import (
 MAX_RETRIES = 3
 DEFAULT_RETRY_TIMEOUT_S = 5
 DEFAULT_DELAY_FACTOR = 2.0
+RESERVED_KEYWORDS = {
+    "SELECT",
+    "INSERT",
+    "DELETE",
+    "UPDATE",
+    "DROP",
+    "CREATE",
+    "FROM",
+    "WHERE",
+    "JOIN",
+    "TABLE",
+    "INDEX",
+}
+
+
+def get_function_name(index: int = 0):
+    """
+    Get the function name at a relative index in the call stack.
+    :param index: 0 for the current function, -1 for the caller, -2 for the caller of
+    the caller, etc.
+    :return: Name of the function at the specified relative index, or None if out of range.
+    """
+    stack = inspect.stack()
+    # Convert relative index to actual stack index
+    stack_index = abs(index) if index <= 0 else None
+
+    if stack_index is not None and stack_index < len(stack):
+        return stack[stack_index].function
+    return None
+
+
+def get_function_logger():
+    caller_name = get_function_name(-1)
+    return getLogger(caller_name)
 
 
 def validate_postgresql_uri(uri: str, allow_async: bool = False):
@@ -53,20 +88,21 @@ def validate_postgresql_uri(uri: str, allow_async: bool = False):
     return uri
 
 
+STARS = "******"
+
+
 def mask_sensitive_data(uri: URL) -> str:
-    replaced_uri = uri._replace(password="******", username="******")
+    replaced_uri = uri._replace(password=STARS, username=STARS)
     return str(replaced_uri)
 
 
 def construct_uri(
-    drivername: str, username: str, password: str, host: str, port: int, database: str
+    drivername: str, username: str, password: str, host: str, port: int, database: str = ""
 ) -> AnyUrl:
     """
     Constructs a PostgreSQL URI from the provided components, excluding slash
     if the database is empty.
     """
-    if not all([drivername, username, password, host, port]):
-        raise ValueError("All connection parameters except 'database' must be provided.")
 
     # Use make_url to ensure proper URI construction
     database_part = f"/{database}" if database else ""
@@ -128,8 +164,7 @@ async def retry_async(
     Returns:
         - The result of the action if successful, or False if all retries fail.
     """
-
-    logger = logger or getLogger("retry_async")
+    logger = logger or get_function_logger()
 
     attempt = 0
     while attempt < max_retries:
@@ -152,26 +187,11 @@ async def retry_async(
     return False
 
 
-RESERVED_KEYWORDS = {
-    "SELECT",
-    "INSERT",
-    "DELETE",
-    "UPDATE",
-    "DROP",
-    "CREATE",
-    "FROM",
-    "WHERE",
-    "JOIN",
-    "TABLE",
-    "INDEX",
-}
-
-
 def is_entity_name_valid(
     entity_name: str, entity_category: str, logger: Optional[Logger] = None
 ) -> bool:
     """Validate entity name against SQL injection, reserved keywords, and special characters."""
-    logger = logger or getLogger("entity_name_validator")
+    logger = logger or get_function_logger()
 
     # Ensure it starts with a letter or underscore and only contains valid characters
     pattern = r"^[A-Za-z_][A-Za-z0-9_]*$"
@@ -222,3 +242,19 @@ def convert_to_sync_dsn(uri: str) -> str:
     # Use _replace to create a new ParseResult with the modified scheme
     sync_uri = parsed_uri._replace(scheme="postgresql")
     return urlunparse(sync_uri)
+
+
+async def _execute_in_batches(tasks: Task, batch_size: int, logger: Optional[Logger] = None):
+    """Execute tasks in smaller batches to avoid overloading the database."""
+    logger = logger or get_function_logger()
+
+    # Process tasks in batches
+    for i in range(0, len(tasks), batch_size):
+        batch = tasks[i : i + batch_size]
+        try:
+            # Gather and execute each batch concurrently
+            await gather(*batch)
+            logger.info(f"Batch of {len(batch)} index creation tasks completed successfully.")
+        except Exception as e:
+            logger.error(f"An error occurred during batch execution: {e}")
+            raise

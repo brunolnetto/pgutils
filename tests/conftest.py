@@ -44,12 +44,17 @@ def invalid_uri_config():
 def databases_settings():
     settings_dict = {
         "db1": {
-            "uri": f"postgresql+psycopg://postgres:postgres@localhost:{DEFAULT_PORT}/db1",
+            "uri": f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}/db1",
             "admin_username": "postgres",
             "admin_password": "postgres",
         },
         "db2": {
             "uri": f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}/db2",
+            "admin_username": "postgres",
+            "admin_password": "postgres",
+        },
+        "db_test": {
+            "uri": f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}/db_test",
             "admin_username": "postgres",
             "admin_password": "postgres",
         },
@@ -61,43 +66,45 @@ def databases_settings():
     }
 
 
-@pytest.fixture(scope="session")
-def async_settings_without_auto_create():
+@pytest.fixture
+def database_settings():
     return DatabaseSettings(
-        **{
-            "uri": f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}/db_test",
-            "admin_username": "postgres",
-            "admin_password": "postgres",
-        }
+        uri="postgresql://user:password@localhost:5432/testdb",
+        admin_username="admin",
+        admin_password="password",
     )
 
 
-@pytest.fixture(scope="session")
-def sync_settings_without_db_name():
-    return DatabaseSettings(
-        **{
-            "uri": f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}",
-            "admin_username": "postgres",
-            "admin_password": "postgres",
-        }
-    )
+@pytest.fixture
+def test_db(database_settings):
+    return TestDatabase(settings=database_settings, logger=MagicMock())
 
 
 @pytest.fixture(scope="function")
-def database_without_db_name(sync_settings_without_db_name):
-    db = AsyncDatabase(sync_settings_without_db_name)
-    yield db
+def mock_logger():
+    """Fixture for mocking a logger."""
+    return MagicMock()
+
+
+class LoggerMock:
+    def __init__(self):
+        self.debug = MagicMock()
+        self.info = MagicMock()
+        self.error = MagicMock()
+        self.warning = MagicMock()
 
 
 @pytest.fixture(scope="function")
-def database_without_auto_create(async_settings_without_auto_create):
-    db = AsyncDatabase(async_settings_without_auto_create)
+def database_test(databases_settings):
+    db = AsyncDatabase(databases_settings["db_test"])
     yield db
 
 
 @pytest.fixture(scope="function")
 def async_database(databases_settings):
-    db = AsyncDatabase(databases_settings["db1"])
+    db = AsyncDatabase(
+        databases_settings["db1"],
+    )
     yield db
 
 
@@ -162,19 +169,6 @@ async def async_session_factory():
     await async_engine.dispose()
 
 
-@pytest.fixture(scope="function")
-def mock_logger():
-    """Fixture for mocking a logger."""
-    return MagicMock()
-
-
-class LoggerMock:
-    def __init__(self):
-        self.info = MagicMock()
-        self.error = MagicMock()
-        self.warning = MagicMock()
-
-
 class DatabaseSettingsFactory(factory.Factory):
     class Meta:
         model = DatabaseSettings
@@ -209,6 +203,23 @@ class DatasourceSettingsFactory(factory.Factory):
 def mock_datasource():
     """Fixture for mocking a Datasource instance."""
     return create_autospec(Datasource)
+
+
+def create_mocked_database():
+    """Create a mocked Datasource instance using factories."""
+    # Generate DatasourceSettings using the factory
+    database_settings = DatabaseSettingsFactory()
+
+    # Create the Datasource instance with the generated datasource settings
+    mock_logger = LoggerMock()
+    database = AsyncDatabase(database_settings, mock_logger)
+
+    return database
+
+
+@pytest.fixture
+def mocked_database():
+    return create_mocked_database()
 
 
 def create_mocked_datasource():
@@ -360,17 +371,3 @@ class TestDatabase(BaseDatabase):
 
     async def list_extensions(self) -> list:
         return ["extension1", "extension2"]
-
-
-@pytest.fixture
-def database_settings():
-    return DatabaseSettings(
-        uri="postgresql://user:password@localhost:5432/testdb",
-        admin_username="admin",
-        admin_password="password",
-    )
-
-
-@pytest.fixture
-def test_db(database_settings):
-    return TestDatabase(settings=database_settings, logger=MagicMock())

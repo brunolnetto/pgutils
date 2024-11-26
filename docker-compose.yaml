@@ -1,45 +1,16 @@
+version: "3.9"
 services:
-  db1:
-    image: postgres:latest
+  postgres:
+    image: postgres:14
+    container_name: postgres-db
     environment:
-      PGDATA: /var/lib/postgresql/data/some_name/
-      POSTGRES_DB: db1
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
     ports:
       - "5432:5432"
-    command: ["postgres", "-c", "config_file=/etc/postgresql.conf"]
     volumes:
-      - ./postgresql.conf:/etc/postgresql.conf
-      - db1_data:/var/lib/postgresql/data
-      - ./pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
-
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 2s
-      retries: 5
-
-  db2:
-    image: postgres:latest
-    environment:
-      PGDATA: /var/lib/postgresql/data/some_name/
-      POSTGRES_DB: db2
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5433:5432"
-    command: ["postgres", "-c", "config_file=/etc/postgresql.conf"]
-    volumes:
-      - ./postgresql.conf:/etc/postgresql.conf
-      - db2_data:/var/lib/postgresql/data
-      - ./pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 2s
-      retries: 5
+      - pgdata:/var/lib/postgresql/data
 
 volumes:
-  db1_data:
-  db2_data:
+  pgdata:

@@ -1,11 +1,19 @@
 import pytest
-from pydantic import ValidationError
+from unittest.mock import MagicMock, patch, PropertyMock, AsyncMock, ANY
 from typing import Dict, List, Set, Any
 
+from pydantic import ValidationError
 from sqlalchemy import Column, Integer, String
+from sqlalchemy.exc import OperationalError
+from ping3 import errors
 
-from pgbase.core import AsyncDatabase, Datasource
-from pgbase.models import DatabaseSettings, DatasourceSettings, TableConstraint, ColumnIndex
+from pgbase.core import AsyncDatabase, Datasource, MAX_BATCH_SIZE
+from pgbase.models import (
+    DatabaseSettings,
+    DatasourceSettings,
+    TableConstraint,
+    ColumnIndex,
+)
 from pgbase.utils import mask_sensitive_data, is_entity_name_valid
 
 from .conftest import DatasourceSettingsFactory
@@ -57,9 +65,9 @@ def test_check_database_exists_true(async_database: AsyncDatabase):
     assert async_database.database_exists() is True
 
 
-def test_check_database_doesnt_exist(database_without_auto_create: AsyncDatabase):
+def test_check_database_doesnt_exist(database_test: AsyncDatabase):
     """Test when an error occurs during the check (synchronous)."""
-    db = database_without_auto_create
+    db = database_test
 
     # Check that the method returned False due to the error
     db.drop_database()
@@ -74,29 +82,73 @@ def test_check_database_doesnt_exist(database_without_auto_create: AsyncDatabase
     assert db.database_exists() is False
 
 
-def test_check_database_doesnt_exist_without_db_name(database_without_db_name: AsyncDatabase):
-    """Test when an error occurs during the check (synchronous)."""
-    # Check that the method returned False due to the error
-    assert database_without_db_name.database_exists() is False
-
-
 def test_repr_sync_database(async_database: AsyncDatabase):
     AsyncDatabase_repr = str(async_database)
     assert "***" in AsyncDatabase_repr, "Sensitive data should be masked."
 
 
 @pytest.mark.asyncio
-async def test_paginate_sync(async_database: AsyncDatabase):
+async def test_paginate(async_database: AsyncDatabase):
     # Fetch and assert paginated results in batches
     results = []
 
-    async with async_database.get_session() as session:
-        query_str = "SELECT name FROM test_table"
-        async for batch in async_database.paginate(session, query_str, batch_size=2):
-            results.append(batch)
+    query_str = "SELECT name FROM test_table"
+    async for batch in async_database.paginate(query_str, batch_size=2):
+        results.append(batch)
 
-        # Assertion to verify the result
-        assert len(results) == 2
+    # Assertion to verify the result
+    assert len(results) == 2
+
+
+# Helper function to mock the session context manager
+def _mock_session_with_context(mock_session: AsyncMock):
+    async def mock_context_manager():
+        async with mock_session:
+            yield mock_session
+
+    return mock_context_manager
+
+
+@pytest.mark.asyncio
+async def test_get_session_success(mocked_database: AsyncDatabase):
+    # Create a mock session and set it to behave like an async context manager
+    mock_session = AsyncMock()
+    mock_session.__aenter__.return_value = mock_session
+    mock_session.__aexit__.return_value = None  # Mock the exit method for context management
+
+    # Patch session_maker to return the mock session
+    with patch.object(mocked_database, "session_maker", return_value=mock_session):
+        # Use the get_session context manager
+        async with mocked_database.get_session() as session:
+            # Assert the yielded session is the mocked session
+            assert session == mock_session
+
+        # Verify that the session was properly closed
+        mock_session.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_session_with_exception(mocked_database: AsyncDatabase):
+    # Create a mock session and set it to behave like an async context manager
+    mock_session = AsyncMock()
+    mock_session.__aenter__.return_value = mock_session
+    mock_session.__aexit__.return_value = None  # Mock the exit method for context management
+
+    # Patch session_maker to return the mock session
+    with patch.object(mocked_database, "session_maker", return_value=mock_session):
+        # Simulate an exception while using the session
+        with pytest.raises(ValueError, match="Test exception"):
+            async with mocked_database.get_session() as session:
+                assert session == mock_session
+                raise ValueError("Test exception")
+
+        # Verify that rollback was called
+        mock_session.rollback.assert_awaited_once()
+
+        # Verify that the exception was logged
+        mocked_database.logger.error.assert_called_once_with(
+            "Session rollback due to exception: Test exception"
+        )
 
 
 def test_datasource_repr(datasource: Datasource):
@@ -280,6 +332,11 @@ async def test_list_tables(async_database: AsyncDatabase, datasource: Datasource
         "test_table" in ds_db2_tables
     ), "test_table should be listed in the async AsyncDatabase tables."
 
+    with pytest.raises(ValueError) as exc:
+        await async_database.list_tables("inexistent_schema")
+
+    assert "Schema 'inexistent_schema' does not exist." in str(exc.value)
+
 
 @pytest.mark.asyncio
 async def test_create_indexes_async(async_database: AsyncDatabase):
@@ -299,6 +356,85 @@ async def test_create_indexes_async(async_database: AsyncDatabase):
 
     with pytest.raises(ValueError):
         await async_database.create_indexes(invalid_indexes)
+
+
+def test_rtt_is_none(mocked_database: AsyncDatabase):
+    # Patch the `ping` method to return None
+    with patch("pgbase.core.ping", return_value=None):
+        result = mocked_database._measure_network_latency("8.8.8.8")
+
+    assert result == float("inf")
+    message = "Failed to measure latency for 8.8.8.8"
+    mocked_database.logger.warning.assert_called_once_with(message)
+
+
+def test_ping_error(mocked_database: AsyncDatabase):
+    # Patch the `ping` method to raise `errors.PingError`
+    with patch("pgbase.core.ping", side_effect=errors.PingError("Ping failed")):
+        result = mocked_database._measure_network_latency("8.8.8.8")
+
+    assert result == float("inf")
+
+    warn_message = "Ping error when measuring latency to 8.8.8.8: Ping failed"
+    mocked_database.logger.error.assert_called_once_with(warn_message)
+
+
+@pytest.mark.asyncio
+async def test_database_init_without_db_name(mocked_database: AsyncDatabase):
+    # Patch the `ping` method to return None
+    with (
+        patch.object(mocked_database, "create_database", return_value=True),
+        patch.object(
+            type(mocked_database.settings), "name", new_callable=PropertyMock
+        ) as mock_name,
+        patch.object(mocked_database.logger, "warning") as mock_warning,
+    ):
+        # Set the mocked value of `settings.name`
+        mock_name.return_value = ""
+
+        await mocked_database.init()
+
+        # Check if the warning message was logged
+        cause = "No database name provided or configured"
+        reason = "skipping database creation"
+        message = f"{cause}, therefore {reason}."
+        mock_warning.assert_called_once_with(message)
+
+
+@pytest.mark.asyncio
+async def test_database_init_with_db_name(mocked_database: AsyncDatabase):
+    # Patch the `ping` method to return None
+    with (
+        patch.object(mocked_database, "create_database", return_value=True),
+        patch.object(
+            type(mocked_database.settings), "name", new_callable=PropertyMock
+        ) as mock_name,
+        patch.object(mocked_database.logger, "warning") as mock_warning,
+    ):
+        # Set the mocked value of `settings.name` to a valid name
+        mock_name.return_value = "mock_db"
+
+        # Call the `init` method
+        await mocked_database.init()
+
+        # Verify `warning` was NOT called
+        mock_warning.assert_not_called()
+
+        # Verify `create_database` was called with the correct name
+        mocked_database.create_database.assert_called_once_with("mock_db")
+
+
+def test_returns_max_batch_size(mocked_database: AsyncDatabase):
+    # Mock psutil and latency values to ensure load_factor <= LOAD_THRESHOLD
+    with (
+        patch("psutil.cpu_percent", return_value=50),
+        patch("psutil.virtual_memory", return_value=MagicMock(percent=50)),
+        patch("psutil.disk_usage", return_value=MagicMock(percent=50)),
+        patch("psutil.net_io_counters"),
+        patch.object(mocked_database, "_measure_network_latency", return_value=0.5),
+    ):
+        result = mocked_database._adjust_batch_size()
+        assert result == MAX_BATCH_SIZE
 
 
 @pytest.mark.asyncio
@@ -333,6 +469,7 @@ async def test_list_indexes(async_database: AsyncDatabase, datasource: Datasourc
 
 @pytest.mark.asyncio
 async def test_multi_datasource_health_check(datasource: Datasource):
+    await datasource.init_all()
     health_checks = await datasource.health_check_all()
     assert all(health_checks.values()), "Health check for all AsyncDatabases should pass."
 
@@ -411,7 +548,7 @@ def test_corrupted_datasource_settings():
 
 def test_datasource_settings_representation(datasource_settings: DatasourceSettings):
     """Test the string representation of DatasourceSettings."""
-    datasource_repr = f"<DataSourceSettings(name={datasource_settings.name}, databases=2)>"
+    datasource_repr = f"<DataSourceSettings(name={datasource_settings.name}, databases=3)>"
     assert datasource_settings.__repr__() == datasource_repr
 
 
@@ -489,6 +626,64 @@ def test_create_database_if_not_exists(test_db):
 
 def test_check_database_exists(test_db):
     assert test_db.database_exists("test_db") is True
+
+
+@pytest.mark.asyncio
+async def test_database_exists_with_invalid_name(mocked_database: AsyncDatabase):
+    error = OperationalError("DB error", None, None)
+
+    # Patch the logger to capture the error
+    with patch.object(mocked_database.admin_engine, "connect", side_effect=error):
+        # Simulate the case when the database cannot be accessed
+        result = mocked_database.database_exists(db_name="nonexistent_db")
+
+        # Verify the error log for operational error
+        mocked_database.logger.error.assert_called_once()
+
+        # Get the arguments passed to the logger.error call
+        args, _ = mocked_database.logger.error.call_args
+        log_message = args[0]
+
+        # Check if the log message matches the expected regex pattern
+        assert "DB error" in log_message
+
+        assert result is False  # It should return False on an OperationalError
+
+
+@pytest.mark.asyncio
+async def test_database_exists_with_unexpected_exception(mocked_database: AsyncDatabase):
+    error = Exception("Unexpected error")
+    # Patch the logger to capture the error
+    with patch.object(mocked_database.admin_engine, "connect", side_effect=error):
+        # Simulate the case when an unexpected exception is raised
+        result = mocked_database.database_exists(db_name="any_db")
+
+        # Verify the error log for unexpected exception
+        mocked_database.logger.error.assert_called_once_with("Unexpected error: Unexpected error")
+        assert result is False  # It should return False on any unexpected exception
+
+
+@pytest.mark.asyncio
+async def test_database_exists_success(mocked_database: AsyncDatabase):
+    # Patch the logger to avoid logging output
+    with (
+        patch.object(mocked_database.logger, "error"),
+        patch.object(mocked_database.admin_engine, "connect") as mock_connect,
+    ):
+        # Simulate successful database existence check
+        mock_connection = MagicMock()
+        mock_result = MagicMock()
+
+        # Simulate that the database exists
+        mock_result.scalar.return_value = 1
+        mock_connection.execute.return_value = mock_result
+        mock_connect.return_value.__enter__.return_value = mock_connection
+
+        result = mocked_database.database_exists(db_name="existing_db")
+
+        # Check if the query was executed correctly and the result is True
+        mock_connection.execute.assert_called_once_with(ANY, {"db_name": "existing_db"})
+        assert result is True  # It should return True when the database exists
 
 
 @pytest.mark.asyncio

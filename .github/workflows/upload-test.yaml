@@ -14,7 +14,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    # Install Docker
+    # Set up Docker and Docker Compose
     - name: Install Docker
       run: |
         sudo apt-get update
@@ -24,86 +24,74 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y docker-ce
 
-    # Install Docker Compose
     - name: Install Docker Compose
       run: |
         DOCKER_COMPOSE_VERSION=1.29.2  # Specify the desired version
         sudo curl -L "https://github.com/docker/compose/releases/download/$DOCKER_COMPOSE_VERSION/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
         sudo chmod +x /usr/local/bin/docker-compose
 
-
-    # Verify installations
-    - name: Verify Docker and Docker Compose Installation
+    - name: Verify Docker Installation
       run: |
         docker --version
         docker-compose --version
 
+    # Start PostgreSQL container
     - name: Build and Start Docker Containers
-      run: |
-        docker-compose -f ./docker-compose.yaml up -d
+      run: docker-compose -f ./docker-compose.yaml up -d
 
-    # Wait for the databases to be healthy
-    - name: Wait for Databases to be Ready
+    # Wait for the PostgreSQL database to be ready
+    - name: Wait for Database to be Ready
       run: |
-        for port in 5432 5433; do
-          until nc -z localhost $port; do
-            sleep 1 # wait for 1 second before checking again
-          done
+        until docker exec postgres-db pg_isready -U postgres; do
+          sleep 1
         done
 
-    - name: Run docker process to check for containers
-      run: docker ps -a
+    # Run database initialization commands
+    - name: Initialize Database
+      run: |
+        docker exec -i postgres-db psql -U postgres <<EOF
+        ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO postgres;
+        ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO postgres;
+        ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL PRIVILEGES ON FUNCTIONS TO postgres;
+        ALTER USER postgres WITH PASSWORD 'postgres';
+        EOF
 
+    #----------------------------------------------
+    #       Install Python
+    #----------------------------------------------
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.9'
 
-    # Install and configure Poetry
-    - name: Install and configure Poetry
-      uses: snok/install-poetry@v1
+    #----------------------------------------------
+    #       install & configure uv
+    #----------------------------------------------
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
       with:
-        virtualenvs-create: true
-        virtualenvs-in-project: true
+        version: "0.5.1"
 
-    # Load cached venv if cache exists
-    - name: Load cached venv
-      id: cached-poetry-dependencies
-      uses: actions/cache@v4
-      with:
-        path: .venv
-        key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
+    - name: Set up Python
+      run: uv python install
 
-    # Install dependencies if cache does not exist
-    - name: Install dependencies
-      if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
-      run: poetry install --verbose --no-interaction --no-root
-
-    # Install your root project if required
-    - name: Install project
-      run: poetry install --verbose --no-interaction
-
-    - name: Run docker process to check for containers
-      run: docker ps -a
-
-    - name: Run docker compose logs
-      run: docker compose logs
+    - name: Install the project
+      run: uv sync --all-extras --dev
 
     # Run tests and generate coverage report
     - name: Run Tests with Coverage
       run: |
-        poetry run pytest --cov=pgbase tests/
-        # Save coverage report to a specific file
+        uv run pytest --cov=pgbase tests/
         mkdir -p coverage-reports
         mv .coverage coverage-reports/coverage.xml
-
-    # Stop and remove the containers after tests
-    - name: Stop Docker Containers
-      run: docker-compose -f docker-compose.yaml down
 
     # Upload Coverage Report to Codecov
     - name: Upload Coverage Reports to Codecov
       run: |
         curl -Os https://uploader.codecov.io/latest/linux/codecov
         chmod +x codecov
-        ./codecov -t ${{ secrets.CODECOV_TOKEN }} -f coverage-reports/coverage.xml
+        ./codecov -t ${{ secrets.CODECOV_TOKEN }} -f coverage.xml
+
+    # Stop and clean up the database container
+    - name: Stop Docker Containers
+      run: docker-compose -f docker-compose.yaml down

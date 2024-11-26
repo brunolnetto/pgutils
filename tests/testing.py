@@ -10,6 +10,8 @@ def create_database(uri: str, db_name: str):
 
     # Drop the database if it exists
     with default_engine.connect() as conn:
+
+        
         query = text(f"DROP DATABASE IF EXISTS {db_name};")
         conn.execute(query)
         print(f"Dropped database '{db_name}' if it existed.")

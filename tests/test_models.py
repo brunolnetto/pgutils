@@ -205,7 +205,6 @@ async def test_async_paginator(async_session_factory):
         expected_batches = [[("Alice",), ("Bob",)], [("Charlie",), ("David",)]]
 
         results = []
-
         async for batch in paginator.paginate():
             results.append(batch)
 
