@@ -81,7 +81,7 @@ jobs:
     # Run tests and generate coverage report
     - name: Run Tests with Coverage
       run: |
-        uv run pytest --cov=pgbase --cov --cov-report=xml tests/
+        uv run pytest --cov=pgbase tests/
         mkdir -p coverage-reports
         mv .coverage coverage-reports/coverage.xml
 
@@ -91,3 +91,7 @@ jobs:
         curl -Os https://uploader.codecov.io/latest/linux/codecov
         chmod +x codecov
         ./codecov -t ${{ secrets.CODECOV_TOKEN }} -f coverage.xml
+
+    # Stop and clean up the database container
+    - name: Stop Docker Containers
+      run: docker-compose -f docker-compose.yaml down
