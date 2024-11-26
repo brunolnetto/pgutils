@@ -14,7 +14,7 @@ from pgbase.core import AsyncDatabase, Datasource, DataGrid
 from pgbase.models import DatabaseSettings, DatasourceSettings, ColumnIndex
 from tests.testing import prepare_database
 
-DEFAULT_PORT = 5433
+DEFAULT_PORT = 5432
 
 # Database configuration constants
 DB_NAME = "mydb"
@@ -44,12 +44,17 @@ def invalid_uri_config():
 def databases_settings():
     settings_dict = {
         "db1": {
-            "uri": f"postgresql+psycopg://postgres:postgres@localhost:{DEFAULT_PORT}/db1",
+            "uri": f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}/db1",
             "admin_username": "postgres",
             "admin_password": "postgres",
         },
         "db2": {
             "uri": f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}/db2",
+            "admin_username": "postgres",
+            "admin_password": "postgres",
+        },
+        "db_test": {
+            "uri": f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}/db_test",
             "admin_username": "postgres",
             "admin_password": "postgres",
         },
@@ -61,32 +66,12 @@ def databases_settings():
     }
 
 
-@pytest.fixture(scope="session")
-def async_settings_without_auto_create():
-    return DatabaseSettings(
-        **{
-            "uri": f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}/db_test",
-            "admin_username": "postgres",
-            "admin_password": "postgres",
-        }
-    )
-
-
-@pytest.fixture(scope="session")
-def sync_settings_without_db_name():
-    return DatabaseSettings(
-        **{
-            "uri": f"postgresql+asyncpg://postgres:postgres@localhost:{DEFAULT_PORT}",
-            "admin_username": "postgres",
-            "admin_password": "postgres",
-        }
-    )
-
 @pytest.fixture
 def database_settings():
     return DatabaseSettings(
         uri="postgresql://user:password@localhost:5432/testdb",
-        admin_username="admin", admin_password="password",
+        admin_username="admin",
+        admin_password="password",
     )
 
 
@@ -110,20 +95,16 @@ class LoggerMock:
 
 
 @pytest.fixture(scope="function")
-def database_without_db_name(sync_settings_without_db_name):
-    db = AsyncDatabase(sync_settings_without_db_name)
-    yield db
-
-
-@pytest.fixture(scope="function")
-def database_without_auto_create(async_settings_without_auto_create):
-    db = AsyncDatabase(async_settings_without_auto_create)
+def database_test(databases_settings):
+    db = AsyncDatabase(databases_settings["db_test"])
     yield db
 
 
 @pytest.fixture(scope="function")
 def async_database(databases_settings):
-    db = AsyncDatabase(databases_settings["db1"], )
+    db = AsyncDatabase(
+        databases_settings["db1"],
+    )
     yield db
 
 
@@ -188,7 +169,6 @@ async def async_session_factory():
     await async_engine.dispose()
 
 
-
 class DatabaseSettingsFactory(factory.Factory):
     class Meta:
         model = DatabaseSettings
@@ -213,10 +193,7 @@ class DatasourceSettingsFactory(factory.Factory):
     admin_username = "admin"
     admin_password = "password"
     databases = factory.List(
-        [
-            factory.SubFactory(DatabaseSettingsFactory), 
-            factory.SubFactory(DatabaseSettingsFactory)
-        ]
+        [factory.SubFactory(DatabaseSettingsFactory), factory.SubFactory(DatabaseSettingsFactory)]
     )
     connection_timeout = 30
     retry_attempts = 3
@@ -394,4 +371,3 @@ class TestDatabase(BaseDatabase):
 
     async def list_extensions(self) -> list:
         return ["extension1", "extension2"]
-

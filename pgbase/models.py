@@ -7,7 +7,6 @@ from typing import (
     Generator,
     AsyncGenerator,
     Union,
-    Coroutine,
 )
 from pydantic import BaseModel
 import warnings
@@ -45,6 +44,7 @@ DEFAULT_MIN_LENGTH = 1
 DEFAULT_MINIMUM_PASSWORD_SIZE = 1
 
 DEFAULT_CONNECTION_TIMEOUT_S = 30
+DEFAULT_CONNECTION_LIFETIME = 300
 
 
 class QueryValidationError(Exception):
@@ -67,6 +67,7 @@ class DatabaseSettings(BaseModel):
     )
     default_port: int = 5432
     pool_size: int = Field(default=DEFAULT_POOL_SIZE, gt=0)
+    max_inactive_connection_lifetime: int = Field(default=DEFAULT_CONNECTION_LIFETIME, gt=0)
     max_overflow: int = Field(default=DEFAULT_MAX_OVERFLOW, ge=0)
 
     @property
@@ -323,8 +324,6 @@ class TablePaginator:
         )
         result = await self.conn.execute(batch_query)
         return result.fetchall()
-
-
 
     async def paginate(self) -> PageGenerator:
         """Unified paginate method to handle both sync and async queries."""
